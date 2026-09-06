@@ -8,7 +8,8 @@
     "pi-web-plugins/**/pi-web-plugin.ts",
     "pi-web-plugins/**/server-plugin.ts",
     "pi-packages/**/pi-web-plugin.ts",
-    "scripts/*.mjs"
+    "scripts/*.mjs",
+    "scripts/perf/*.mjs"
   ],
   "project": [
     "src/**/*.ts",
