@@ -363,6 +363,7 @@ function fakeSessionDaemon(): SessionProxyDaemon {
         body: JSON.stringify(captured),
       });
     },
+    requestRaw: () => Promise.reject(new Error("raw daemon requests not configured for this test")),
     connectWebSocket: () => { throw new Error("WebSocket not configured for test"); },
   };
 }

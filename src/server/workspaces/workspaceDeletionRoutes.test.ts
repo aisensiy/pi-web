@@ -125,6 +125,7 @@ function fakeDaemon(): SessionProxyDaemon {
       });
       return daemonFailure === undefined ? Promise.resolve(daemonResponse) : Promise.reject(daemonFailure);
     },
+    requestRaw: () => Promise.reject(new Error("raw daemon requests not configured for this test")),
     connectWebSocket: () => { throw new Error("WebSocket not configured for test"); },
   };
 }

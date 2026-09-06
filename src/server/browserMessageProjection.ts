@@ -1,33 +1,63 @@
+import { createHash } from "node:crypto";
 import type { MessagePage, SessionUiEvent } from "../shared/apiTypes.js";
 
 /**
- * Remove provider-only thinking data at the browser transport boundary. The
- * runtime message remains unchanged because only affected messages and content
- * blocks are copied.
+ * Base64 length above which an inline image part is replaced by an on-demand
+ * media reference. Long transcripts routinely carry multi-megabyte screenshots
+ * in tool results; inlining them makes the first messages page cost tens of
+ * megabytes on slow links.
  */
-export function projectBrowserMessage(message: unknown): unknown {
+export const INLINE_IMAGE_DATA_LIMIT = 64 * 1024;
+
+/**
+ * Remove provider-only thinking data and replace oversized inline images with
+ * on-demand media references at the browser transport boundary. The runtime
+ * message remains unchanged because only affected messages and content blocks
+ * are copied.
+ */
+export function projectBrowserMessage(message: unknown, mediaSrc?: (mediaId: string) => string): unknown {
   if (!isRecord(message)) return message;
   const originalContent = message["content"];
   if (!isUnknownArray(originalContent)) return message;
 
   const content = mapChanged(originalContent, (part) => {
-    if (!isRecord(part) || part["type"] !== "thinking" || !Object.hasOwn(part, "thinkingSignature")) return part;
-    const projected = { ...part };
-    delete projected["thinkingSignature"];
-    return projected;
+    if (!isRecord(part)) return part;
+    if (part["type"] === "thinking") {
+      if (!Object.hasOwn(part, "thinkingSignature")) return part;
+      const projected = { ...part };
+      delete projected["thinkingSignature"];
+      return projected;
+    }
+    if (part["type"] === "image") {
+      const data = part["data"];
+      if (mediaSrc === undefined || typeof data !== "string" || data.length <= INLINE_IMAGE_DATA_LIMIT) return part;
+      const mimeType = typeof part["mimeType"] === "string" && part["mimeType"] !== "" ? part["mimeType"] : "application/octet-stream";
+      return {
+        type: "image",
+        mimeType,
+        src: mediaSrc(mediaIdForData(data)),
+        byteSize: Math.floor((data.length * 3) / 4),
+      };
+    }
+    return part;
   });
 
   return content === originalContent ? message : { ...message, content };
 }
 
-export function projectBrowserMessageResponse(response: MessagePage): MessagePage {
-  const messages = mapChanged(response.messages, projectBrowserMessage);
+/** Content-hash id used to fetch an oversized image from the media endpoint. */
+export function mediaIdForData(data: string): string {
+  return createHash("sha256").update(data).digest("hex");
+}
+
+export function projectBrowserMessageResponse(response: MessagePage, mediaSrc?: (mediaId: string) => string): MessagePage {
+  const messages = mapChanged(response.messages, (message) => projectBrowserMessage(message, mediaSrc));
   return messages === response.messages ? response : { ...response, messages };
 }
 
-export function projectBrowserSessionEvent(event: SessionUiEvent): SessionUiEvent {
+export function projectBrowserSessionEvent(event: SessionUiEvent, mediaSrc?: (mediaId: string) => string): SessionUiEvent {
   if (event.type !== "message.end" || event.message === undefined) return event;
-  const message = projectBrowserMessage(event.message);
+  const message = projectBrowserMessage(event.message, mediaSrc);
   return message === event.message ? event : { ...event, message };
 }
 

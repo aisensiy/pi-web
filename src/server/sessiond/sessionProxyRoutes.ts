@@ -12,6 +12,12 @@ export interface SessionProxyDaemon {
     body?: unknown,
     options?: SessionDaemonRequestOptions,
   ): Promise<{ statusCode: number; headers: Record<string, string>; body: string }>;
+  /** Raw passthrough for non-JSON daemon payloads (e.g. session media). */
+  requestRaw(
+    method: string,
+    path: string,
+    options?: SessionDaemonRequestOptions,
+  ): Promise<{ statusCode: number; headers: Record<string, string>; body: Buffer }>;
   connectWebSocket(path: string): WebSocket;
 }
 
@@ -23,6 +29,21 @@ export function registerSessionProxyRoutes(app: FastifyInstance, daemon: Session
       const contentType = upstream.headers["content-type"];
       if (contentType !== undefined && contentType !== "") reply.header("content-type", contentType);
       return upstream.body !== "" ? parseJson(upstream.body) : undefined;
+    } catch (error) {
+      requestFailed(reply, error);
+      return undefined;
+    }
+  };
+
+  const proxyRaw = async (request: { method: string; url: string }, reply: FastifyReply) => {
+    try {
+      const upstream = await daemon.requestRaw(request.method, stripPrefix(request.url, prefix));
+      reply.code(upstream.statusCode);
+      for (const header of ["content-type", "cache-control", "content-length"] as const) {
+        const value = upstream.headers[header];
+        if (value !== undefined && value !== "") reply.header(header, value);
+      }
+      return await reply.send(upstream.body);
     } catch (error) {
       requestFailed(reply, error);
       return undefined;
@@ -50,6 +71,7 @@ export function registerSessionProxyRoutes(app: FastifyInstance, daemon: Session
   app.all(`${prefix}/auth`, (request, reply) => proxy(request, reply));
   app.all(`${prefix}/auth/*`, (request, reply) => proxy(request, reply));
   app.all(`${prefix}/sessions`, (request, reply) => proxy(request, reply));
+  app.get(`${prefix}/sessions/:sessionId/media/:mediaId`, (request, reply) => proxyRaw(request, reply));
   app.all(`${prefix}/sessions/*`, (request, reply) => proxy(request, reply));
 }
 

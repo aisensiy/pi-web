@@ -158,6 +158,7 @@ interface FakeSessionDaemonResponse {
   statusCode: number;
   headers: Record<string, string>;
   body: string;
+  rawBody?: Buffer;
 }
 
 class FakeSessionDaemon {
@@ -192,6 +193,14 @@ class FakeSessionDaemon {
     const queuedResponse = this.queuedResponses.shift();
     if (queuedResponse instanceof Error) return Promise.reject(queuedResponse);
     return Promise.resolve(queuedResponse ?? { statusCode: 200, headers: { "content-type": "application/json" }, body: JSON.stringify({ ok: true }) });
+  }
+
+  requestRaw(method: string, path: string): Promise<{ statusCode: number; headers: Record<string, string>; body: Buffer }> {
+    this.requests.push({ method, path, body: undefined });
+    const queuedResponse = this.queuedResponses.shift();
+    if (queuedResponse instanceof Error) return Promise.reject(queuedResponse);
+    const body = queuedResponse?.rawBody ?? Buffer.from(queuedResponse?.body ?? "", "utf8");
+    return Promise.resolve({ statusCode: queuedResponse?.statusCode ?? 200, headers: queuedResponse?.headers ?? { "content-type": "application/octet-stream" }, body });
   }
 
   connectWebSocket(path: string): WebSocket {

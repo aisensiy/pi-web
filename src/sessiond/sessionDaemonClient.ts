@@ -40,6 +40,47 @@ export class SessionDaemonClient {
     return this.requestSocket(method, path, payload, options.signal);
   }
 
+  /** Fetch a daemon response as raw bytes; used for non-JSON payloads such as media. */
+  async requestRaw(
+    method: string,
+    path: string,
+    options: SessionDaemonRequestOptions = {},
+  ): Promise<{ statusCode: number; headers: Record<string, string>; body: Buffer }> {
+    if (this.baseUrl !== undefined && this.baseUrl !== "") {
+      const response = await fetch(new URL(path, this.baseUrl), { method, ...(options.signal === undefined ? {} : { signal: options.signal }) });
+      return {
+        statusCode: response.status,
+        headers: Object.fromEntries(response.headers.entries()),
+        body: Buffer.from(await response.arrayBuffer()),
+      };
+    }
+    return new Promise((resolve, reject) => {
+      const request = http.request(
+        {
+          socketPath: this.socketPath,
+          path,
+          method,
+          ...(options.signal === undefined ? {} : { signal: options.signal }),
+        },
+        (response) => {
+          const chunks: Uint8Array[] = [];
+          response.on("data", (chunk: Buffer | string) => {
+            chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+          });
+          response.on("end", () => {
+            resolve({
+              statusCode: response.statusCode ?? 500,
+              headers: Object.fromEntries(Object.entries(response.headers).map(([key, value]) => [key, Array.isArray(value) ? value.join(", ") : value ?? ""])),
+              body: Buffer.concat(chunks),
+            });
+          });
+        },
+      );
+      request.on("error", reject);
+      request.end();
+    });
+  }
+
   getActiveAgentProfile(): Promise<SessionDaemonAgentProfileResult> {
     return getSessionDaemonActiveAgentProfile(this);
   }
