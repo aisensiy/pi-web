@@ -6,12 +6,18 @@ import { createServerPluginExecFile } from "./serverPluginExec.js";
 
 describe("server plugin execFile helper", () => {
   it("runs argv without a shell, returns nonzero exits, and bounds both output streams", async () => {
-    const execFile = createServerPluginExecFile({ maxTimeoutMs: 2_000, maxOutputBytes: 8 });
+    const execFile = createServerPluginExecFile({
+      maxTimeoutMs: 2_000,
+      maxOutputBytes: 8,
+    });
     const signal = new AbortController().signal;
 
     const result = await execFile({
       file: process.execPath,
-      args: ["-e", "process.stdout.write('abcdefghijkl'); process.stderr.write('uvwxyz0123'); process.exit(7)"],
+      args: [
+        "-e",
+        "process.stdout.write('abcdefghijkl'); process.stderr.write('uvwxyz0123'); process.exit(7)",
+      ],
       signal,
     });
 
@@ -39,11 +45,16 @@ describe("server plugin execFile helper", () => {
   });
 
   it("merges environment overrides, removes requested host keys, and never expands a shell", async () => {
-    const execFile = createServerPluginExecFile({ env: { BASE_VALUE: "base", REMOVE_ME: "host" } });
+    const execFile = createServerPluginExecFile({
+      env: { BASE_VALUE: "base", REMOVE_ME: "host" },
+    });
 
     const result = await execFile({
       file: process.execPath,
-      args: ["-e", "process.stdout.write(`${process.env.BASE_VALUE}:${process.env.PLUGIN_VALUE}:${String(process.env.REMOVE_ME)}`)"],
+      args: [
+        "-e",
+        "process.stdout.write(`${process.env.BASE_VALUE}:${process.env.PLUGIN_VALUE}:${String(process.env.REMOVE_ME)}`)",
+      ],
       env: { PLUGIN_VALUE: "$BASE_VALUE literal", REMOVE_ME: "plugin" },
       unsetEnv: ["REMOVE_ME"],
       signal: new AbortController().signal,
@@ -55,12 +66,14 @@ describe("server plugin execFile helper", () => {
   it("rejects malformed environment keys before spawning", async () => {
     const execFile = createServerPluginExecFile();
 
-    await expect(execFile({
-      file: process.execPath,
-      args: ["-e", "process.exit(99)"],
-      unsetEnv: ["INVALID=KEY"],
-      signal: new AbortController().signal,
-    })).rejects.toThrow("unsetEnv keys");
+    await expect(
+      execFile({
+        file: process.execPath,
+        args: ["-e", "process.exit(99)"],
+        unsetEnv: ["INVALID=KEY"],
+        signal: new AbortController().signal,
+      }),
+    ).rejects.toThrow("unsetEnv keys");
   });
 
   it("rejects an already-aborted operation without spawning", async () => {
@@ -69,32 +82,52 @@ describe("server plugin execFile helper", () => {
     const reason = new Error("caller stopped");
     controller.abort(reason);
 
-    await expect(execFile({
-      file: process.execPath,
-      args: ["-e", "process.exit(0)"],
-      signal: controller.signal,
-    })).rejects.toBe(reason);
+    await expect(
+      execFile({
+        file: process.execPath,
+        args: ["-e", "process.exit(0)"],
+        signal: controller.signal,
+      }),
+    ).rejects.toBe(reason);
   });
 
   it("rejects malformed AbortSignal lookalikes before spawning", async () => {
     const execFile = createServerPluginExecFile();
-    const malformedSignal = { aborted: false, addEventListener() { /* incomplete untyped plugin input */ } };
+    const malformedSignal = {
+      aborted: false,
+      addEventListener() {
+        /* incomplete untyped plugin input */
+      },
+    };
 
-    await expect(execFile({
-      file: process.execPath,
-      args: ["-e", "process.exit(99)"],
-      // @ts-expect-error Exercise the runtime boundary used by plain JavaScript plugins.
-      signal: malformedSignal,
-    })).rejects.toThrow("AbortSignal");
+    await expect(
+      execFile({
+        file: process.execPath,
+        args: ["-e", "process.exit(99)"],
+        // @ts-expect-error Exercise the runtime boundary used by plain JavaScript plugins.
+        signal: malformedSignal,
+      }),
+    ).rejects.toThrow("AbortSignal");
   });
 
-  it.skipIf(process.platform === "win32")("terminates the command process group when a deadline expires", async () => {
-    const tempDir = await mkdtemp(join(tmpdir(), "pi-web-plugin-exec-tree-"));
-    const pidPath = join(tempDir, "descendant.pid");
-    let descendantPid: number | undefined;
-    try {
-      const execFile = createServerPluginExecFile({ maxTimeoutMs: 200 });
-      const parentSource = `
+  it("treats a reparented zombie as terminated while checking process cleanup", () => {
+    expect(
+      processStatIndicatesRunning("4310 (MainThread) Z 1 4303 4303 0"),
+    ).toBe(false);
+    expect(
+      processStatIndicatesRunning("4310 (MainThread) S 1 4303 4303 0"),
+    ).toBe(true);
+  });
+
+  it.skipIf(process.platform === "win32")(
+    "terminates the command process group when a deadline expires",
+    async () => {
+      const tempDir = await mkdtemp(join(tmpdir(), "pi-web-plugin-exec-tree-"));
+      const pidPath = join(tempDir, "descendant.pid");
+      let descendantPid: number | undefined;
+      try {
+        const execFile = createServerPluginExecFile({ maxTimeoutMs: 200 });
+        const parentSource = `
         const { spawn } = require("node:child_process");
         const { writeFileSync } = require("node:fs");
         const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore" });
@@ -102,43 +135,76 @@ describe("server plugin execFile helper", () => {
         setInterval(() => {}, 1000);
       `;
 
-      await expect(execFile({
-        file: process.execPath,
-        args: ["-e", parentSource],
-        signal: new AbortController().signal,
-      })).rejects.toThrow("200ms");
-      descendantPid = Number(await readFile(pidPath, "utf8"));
+        await expect(
+          execFile({
+            file: process.execPath,
+            args: ["-e", parentSource],
+            signal: new AbortController().signal,
+          }),
+        ).rejects.toThrow("200ms");
+        descendantPid = Number(await readFile(pidPath, "utf8"));
 
-      await expectProcessExit(descendantPid);
-    } finally {
-      if (descendantPid !== undefined && processIsAlive(descendantPid)) {
-        process.kill(descendantPid, "SIGKILL");
+        await expectProcessExit(descendantPid);
+      } finally {
+        if (
+          descendantPid !== undefined &&
+          (await processIsRunning(descendantPid))
+        ) {
+          process.kill(descendantPid, "SIGKILL");
+        }
+        await rm(tempDir, { recursive: true, force: true });
       }
-      await rm(tempDir, { recursive: true, force: true });
-    }
-  });
+    },
+  );
 
   it("enforces the host timeout cap", async () => {
     const execFile = createServerPluginExecFile({ maxTimeoutMs: 40 });
 
-    await expect(execFile({
-      file: process.execPath,
-      args: ["-e", "setInterval(() => {}, 1000)"],
-      timeoutMs: 5_000,
-      signal: new AbortController().signal,
-    })).rejects.toThrow("40ms");
+    await expect(
+      execFile({
+        file: process.execPath,
+        args: ["-e", "setInterval(() => {}, 1000)"],
+        timeoutMs: 5_000,
+        signal: new AbortController().signal,
+      }),
+    ).rejects.toThrow("40ms");
   });
 });
 
 async function expectProcessExit(pid: number): Promise<void> {
   for (let attempt = 0; attempt < 50; attempt += 1) {
-    if (!processIsAlive(pid)) return;
-    await new Promise((resolvePromise) => { setTimeout(resolvePromise, 10); });
+    if (!(await processIsRunning(pid))) return;
+    await new Promise((resolvePromise) => {
+      setTimeout(resolvePromise, 10);
+    });
   }
-  throw new Error(`Descendant process ${String(pid)} survived the command deadline`);
+  throw new Error(
+    `Descendant process ${String(pid)} survived the command deadline`,
+  );
 }
 
-function processIsAlive(pid: number): boolean {
+async function processIsRunning(pid: number): Promise<boolean> {
+  if (!processExists(pid)) return false;
+  if (process.platform !== "linux") return true;
+  try {
+    return processStatIndicatesRunning(
+      await readFile(`/proc/${String(pid)}/stat`, "utf8"),
+    );
+  } catch {
+    // The process may have exited between kill(0) and the procfs read. A second
+    // existence check preserves the conservative result for other read errors.
+    return processExists(pid);
+  }
+}
+
+function processStatIndicatesRunning(stat: string): boolean {
+  const commandEnd = stat.lastIndexOf(")");
+  const state =
+    commandEnd === -1 ? "" : stat.slice(commandEnd + 2, commandEnd + 3);
+  return state !== "Z" && state !== "X" && state !== "x";
+}
+
+function processExists(pid: number): boolean {
   try {
     process.kill(pid, 0);
     return true;
