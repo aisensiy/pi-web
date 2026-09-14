@@ -21,7 +21,10 @@ export const WORKSPACE_FILE_FEDERATION_TIMEOUT_MS = 30_000;
 // Accommodates the bounded 1,000-entry tree and escaped paths/content while
 // keeping every workspace-file JSON hop finite after response headers.
 export const WORKSPACE_FILE_JSON_RESPONSE_BODY_MAX_BYTES = 32 * 1024 * 1024;
-export const WORKSPACE_FILE_PREVIEW_ROUTE_PATH = "/projects/:projectId/workspaces/:workspaceId/file/preview";
+export const WORKSPACE_FILE_PREVIEW_ROUTE_PATH =
+  "/projects/:projectId/workspaces/:workspaceId/file/preview";
+export const SESSION_MESSAGES_ROUTE_PATH = "/sessions/:sessionId/messages";
+export const SESSION_MEDIA_ROUTE_PATH = "/sessions/:sessionId/media/:mediaId";
 
 export interface FederatedHttpRouteSpec {
   method: FederatedHttpMethod;
@@ -44,9 +47,21 @@ export const FEDERATED_HTTP_ROUTES = [
   { method: "PUT", path: "/config" },
   { method: "GET", path: "/plugins" },
   { method: "GET", path: "/pi-packages" },
-  { method: "POST", path: "/pi-packages/install", timeoutMs: PI_PACKAGE_MUTATION_PROXY_TIMEOUT_MS },
-  { method: "POST", path: "/pi-packages/remove", timeoutMs: PI_PACKAGE_MUTATION_PROXY_TIMEOUT_MS },
-  { method: "POST", path: "/pi-packages/update", timeoutMs: PI_PACKAGE_MUTATION_PROXY_TIMEOUT_MS },
+  {
+    method: "POST",
+    path: "/pi-packages/install",
+    timeoutMs: PI_PACKAGE_MUTATION_PROXY_TIMEOUT_MS,
+  },
+  {
+    method: "POST",
+    path: "/pi-packages/remove",
+    timeoutMs: PI_PACKAGE_MUTATION_PROXY_TIMEOUT_MS,
+  },
+  {
+    method: "POST",
+    path: "/pi-packages/update",
+    timeoutMs: PI_PACKAGE_MUTATION_PROXY_TIMEOUT_MS,
+  },
   { method: "GET", path: "/projects" },
   { method: "POST", path: "/projects" },
   { method: "DELETE", path: "/projects/:projectId" },
@@ -132,7 +147,8 @@ export const FEDERATED_HTTP_ROUTES = [
   { method: "POST", path: "/sessions/cleanup" },
   { method: "POST", path: "/sessions/bulk/archive" },
   { method: "POST", path: "/sessions/bulk/delete-archived" },
-  { method: "GET", path: "/sessions/:sessionId/messages" },
+  { method: "GET", path: SESSION_MESSAGES_ROUTE_PATH },
+  { method: "GET", path: SESSION_MEDIA_ROUTE_PATH },
   { method: "GET", path: "/sessions/:sessionId/notifications" },
   { method: "POST", path: "/sessions/:sessionId/notifications/dismiss" },
   { method: "POST", path: "/sessions/:sessionId/notifications/dismiss-all" },
@@ -162,8 +178,16 @@ export const FEDERATED_HTTP_ROUTES = [
   { method: "POST", path: "/sessions/:sessionId/shell" },
   { method: "POST", path: "/sessions/:sessionId/commands/run" },
   { method: "POST", path: "/sessions/:sessionId/commands/respond" },
-  { method: "POST", path: "/sessions/:sessionId/tree/navigate", timeoutMs: SESSION_TREE_NAVIGATION_PROXY_TIMEOUT_MS },
-  { method: "POST", path: "/sessions/:sessionId/tree/fork", timeoutMs: SESSION_TREE_FORK_PROXY_TIMEOUT_MS },
+  {
+    method: "POST",
+    path: "/sessions/:sessionId/tree/navigate",
+    timeoutMs: SESSION_TREE_NAVIGATION_PROXY_TIMEOUT_MS,
+  },
+  {
+    method: "POST",
+    path: "/sessions/:sessionId/tree/fork",
+    timeoutMs: SESSION_TREE_FORK_PROXY_TIMEOUT_MS,
+  },
   { method: "POST", path: "/sessions/:sessionId/abort" },
   { method: "POST", path: "/sessions/:sessionId/stop" },
   { method: "POST", path: "/sessions/:sessionId/archive" },
