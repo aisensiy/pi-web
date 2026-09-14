@@ -1095,6 +1095,18 @@ export interface ModelSelectionResponse {
   models: SessionModel[];
 }
 
+export interface SessionDefaults {
+  defaultProvider?: string;
+  defaultModel?: string;
+  defaultThinkingLevel?: import("./thinkingLevels.js").ThinkingLevel;
+}
+
+export interface SessionDefaultsUpdate {
+  provider?: string;
+  modelId?: string;
+  thinkingLevel?: import("./thinkingLevels.js").ThinkingLevel;
+}
+
 export interface ThinkingLevelsResponse {
   levels: string[];
 }
@@ -1161,6 +1173,14 @@ export interface SessionStatus {
 export interface SlashCommand {
   name: string;
   description?: string;
+  /**
+   * Pi-style argument hint (e.g. `<PR-URL>`, `[instructions]`) shown next to
+   * the command name in autocomplete, using `<angle>` for required and
+   * `[square]` for optional arguments. Sourced from the `argument-hint`
+   * frontmatter of prompt templates; absent when a command takes no arguments
+   * or does not declare them.
+   */
+  argumentHint?: string;
   source: "extension" | "prompt" | "skill" | "builtin";
 }
 
