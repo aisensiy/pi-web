@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 
-import { afterEach, describe, expect, it, vi, type Mock } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from "vitest";
 import { trustApi } from "../api";
 import type { Workspace } from "../api";
 import type { MachineStatusSnapshot } from "../../../shared/machineStatus";
@@ -8,6 +8,12 @@ import { machineStatusSnapshot } from "../machineStatus.testSupport";
 import { WorkspaceList } from "./WorkspaceList";
 
 let restoreClipboardStub: () => void = () => undefined;
+
+beforeEach(() => {
+  // Menu rendering reads trust even when the test only exercises copying/removal.
+  vi.spyOn(trustApi, "workspaceTrust").mockImplementation((_projectId, workspaceId) =>
+    Promise.resolve({ path: `/repo/${workspaceId}`, decision: true, trusted: true }));
+});
 
 afterEach(() => {
   vi.restoreAllMocks();

@@ -188,9 +188,10 @@ function chatMessageModelLabel(message: ChatLine): string | undefined {
 export class ChatView extends LitElement {
   @property({ attribute: false }) messages: ChatLine[] = [];
   @property() sessionId = "";
+  @property() machineId = "local";
   @property({ attribute: false }) onMessageAction?: (entryId: string, action: "fork" | "back") => Promise<void>;
   @property({ type: Boolean }) messageActionsDisabled = false;
-  @state() private messageActionPending = false;
+  @state() private messageActionPending: symbol | undefined;
   @state() private messageActionError: { sessionId: string; entryId: string; message: string } | undefined;
   @property({ type: Number }) messageStart = 0;
   @property({ type: Number }) messageEnd = 0;
@@ -342,6 +343,11 @@ export class ChatView extends LitElement {
   }
 
   protected override willUpdate(changed: Map<string, unknown>): void {
+    if (changed.has("sessionId") || changed.has("machineId")) {
+      // A new selection must not inherit an earlier visit's operation, even A → B → A.
+      this.messageActionPending = undefined;
+      this.messageActionError = undefined;
+    }
     if (changed.has("sessionId")) {
       this.savePreviousSessionScrollPosition(changed.get("sessionId"));
       this.prepareSessionUiState();
@@ -936,14 +942,18 @@ export class ChatView extends LitElement {
     if (this.messageActionsDisabled || this.messageActionPending || message.entryId === undefined || this.onMessageAction === undefined) return;
     if (!window.confirm(action === "fork" ? "Are you sure you want to fork this session?" : "Are you sure you want to go back to this message?")) return;
     const sessionId = this.sessionId;
-    this.messageActionPending = true;
+    const machineId = this.machineId;
+    const operation = Symbol();
+    this.messageActionPending = operation;
     this.messageActionError = undefined;
     try {
       await this.onMessageAction(message.entryId, action);
     } catch (error) {
-      if (this.sessionId === sessionId) this.messageActionError = { sessionId, entryId: message.entryId, message: error instanceof Error ? error.message : String(error) };
+      if (this.messageActionPending === operation && this.sessionId === sessionId && this.machineId === machineId) {
+        this.messageActionError = { sessionId, entryId: message.entryId, message: error instanceof Error ? error.message : String(error) };
+      }
     } finally {
-      this.messageActionPending = false;
+      if (this.messageActionPending === operation) this.messageActionPending = undefined;
     }
   }
 

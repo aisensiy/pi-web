@@ -18,6 +18,7 @@ const originalDockerDevRepoRoot = process.env["PI_WEB_DOCKER_DEV_REPO_ROOT"];
 const originalAgentDir = process.env["PI_WEB_AGENT_DIR"];
 
 afterEach(() => {
+  vi.unstubAllEnvs();
   restoreEnv("PI_WEB_SKIP_VERSION_CHECK", originalSkipVersionCheck);
   restoreEnv("HOME", originalHome);
   restoreEnv("PATH", originalPath);
@@ -221,12 +222,16 @@ describe("PI WEB status", () => {
   });
 
   it("bypasses cached npm release data for a forced check", async () => {
-    Reflect.deleteProperty(process.env, "PI_WEB_SKIP_VERSION_CHECK");
-    process.env["PI_WEB_DOCKER_RUNTIME"] = "1";
-    process.env["PI_WEB_DOCKER_MODE"] = "runtime";
     const fetchMock = vi.spyOn(globalThis, "fetch")
+      .mockRejectedValue(new Error("Unexpected release fetch in cache fixture"))
       .mockResolvedValueOnce(npmVersionResponse("1.202607.1"))
       .mockResolvedValueOnce(npmVersionResponse("1.202607.2"));
+    // Opt into release lookup only after installing a non-network fetch boundary.
+    for (const key of ["PI_WEB_SKIP_VERSION_CHECK", "PI_WEB_OFFLINE", "PI_SKIP_VERSION_CHECK", "PI_OFFLINE"]) {
+      vi.stubEnv(key, undefined);
+    }
+    process.env["PI_WEB_DOCKER_RUNTIME"] = "1";
+    process.env["PI_WEB_DOCKER_MODE"] = "runtime";
     const daemon = daemonWithRuntime(runningSessiondRuntime("1.202607.0"));
 
     const first = await getPiWebStatus(daemon, { forceReleaseCheck: true });

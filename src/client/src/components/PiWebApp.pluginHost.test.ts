@@ -18,7 +18,7 @@ import { browserErrorScopeKey, machineBrowserErrorScope, workspaceBrowserErrorSc
 import type { MachineNavigationSnapshot } from "../controllers/machineNavigationMemory";
 import type { NavigationFreshness, NavigationScope } from "../controllers/types";
 import { SessionController, type SessionEventSocket } from "../controllers/sessionController";
-import type { SessionUiEvent } from "../sessionSocket";
+import { RealtimeSocket, type SessionUiEvent } from "../sessionSocket";
 import { loadExternalPlugins, type PluginManifestEntry } from "../plugins/external";
 import { PluginRegistry } from "../plugins/registry";
 import type { PiWebPlugin, PluginRuntimeContext, WorkspaceInvalidation, WorkspacePanelContext, WorkspacePanelNavigationV1 } from "../plugins/types";
@@ -2694,6 +2694,7 @@ describe("PiWebApp plugin host", () => {
   });
 
   it("gates portable contributions against remote required mode and fences stale callbacks", async () => {
+    const connect = vi.spyOn(RealtimeSocket.prototype, "connect").mockImplementation(() => undefined);
     const app = createApp();
     setAppState(app, {
       ...initialAppState(),
@@ -2746,6 +2747,7 @@ describe("PiWebApp plugin host", () => {
     installTestTerminalComposition(app, remoteMachine.id);
     await portableAction()?.run();
     expect(run).toHaveBeenCalledOnce();
+    expect(connect.mock.calls.map(([, , machineId]) => machineId)).toEqual(["local", remoteMachine.id]);
   });
 
   it("fails closed while required Terminal manifest verification is pending", async () => {
