@@ -48,9 +48,16 @@ export function arrayOf<T>(parse: (value: unknown) => T): (value: unknown) => T[
   };
 }
 
-function parseUnknownArray(value: unknown): unknown[] {
+function parseTranscriptMessages(value: unknown): unknown[] {
   if (!Array.isArray(value)) throw new Error("Expected array response");
-  return value;
+  return value.map((message: unknown) => {
+    // SDK payloads remain opaque, but durable identity is part of our API contract.
+    if (typeof message === "object" && message !== null && "entryId" in message
+      && message.entryId !== undefined && typeof message.entryId !== "string") {
+      throw new Error("Expected string field: entryId");
+    }
+    return message;
+  });
 }
 
 function arrayOfString(value: unknown, key: string): string[] {
@@ -60,7 +67,7 @@ function arrayOfString(value: unknown, key: string): string[] {
 
 export function parseMessagePage(value: unknown): MessagePage {
   const record = requireRecord(value);
-  return { messages: parseUnknownArray(record["messages"]), start: requireNumber(record, "start"), total: requireNumber(record, "total") };
+  return { messages: parseTranscriptMessages(record["messages"]), start: requireNumber(record, "start"), total: requireNumber(record, "total") };
 }
 
 export function parseMachinesResponse(value: unknown): Machine[] {

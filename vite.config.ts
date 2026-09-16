@@ -192,6 +192,12 @@ export default defineConfig({
     },
   },
   server: {
+    // Manual UI refresh is intentional: Vite reloads after an established dev
+    // socket disconnects, including when iPadOS suspends a background PWA.
+    // hmr:false alone leaves that socket active in Vite 8; disable it too.
+    // These switches do not affect the application's /api WebSocket proxy.
+    hmr: false,
+    ws: false,
     port: 8505,
     strictPort: true,
     ...(config.allowedHosts === undefined ? {} : { allowedHosts: config.allowedHosts }),

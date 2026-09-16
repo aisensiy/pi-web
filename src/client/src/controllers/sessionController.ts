@@ -1,4 +1,4 @@
-import { api as defaultApi, type AskUserCloseResponse, type AskUserSubmission, type CommandResult, type ExtensionDialogAnswer, type ExtensionDialogCloseReason, type ExtensionDialogCloseResponse, type ExtensionDialogOutcome, type MessagePage, type PendingAskUser, type PendingExtensionDialog, type PromptAttachment, type QueuedSessionMessage, type SessionActivity, type SessionBulkFailure, type SessionCleanupExecuteResponse, type SessionInfo, type SessionModelCatalogEntry, type SessionModelScopeMode, type SessionRef, type SessionStatus, type SessionStreamSnapshot, type SessionTreeForkResult, type SessionTreeNavigateResult, type SessionTreeSummaryChoice, type Workspace } from "../api";
+import { api as defaultApi, type AskUserCloseResponse, type AskUserSubmission, type CommandResult, type ExtensionDialogAnswer, type ExtensionDialogCloseReason, type ExtensionDialogCloseResponse, type ExtensionDialogOutcome, type MessagePage, type PendingAskUser, type PendingExtensionDialog, type PromptAttachment, type QueuedSessionMessage, type SessionActivity, type SessionBulkFailure, type SessionCleanupExecuteResponse, type SessionInfo, type SessionModelCatalogEntry, type SessionModelScopeMode, type SessionRef, type SessionStatus, type SessionStreamSnapshot, type SessionTreeForkResult, type SessionTreeNavigateResult, type SessionTreeSnapshot, type SessionTreeSummaryChoice, type Workspace } from "../api";
 import type { AppState, ClosedExtensionDialog } from "../appState";
 import { BrowserErrorReporter, sessionBrowserErrorScope, workspaceBrowserErrorScope, type SessionBrowserErrorOwner } from "../browserErrors";
 import { forgetCachedNewSession, isCachedNewSessionInfo, markCachedNewSessionInfo, mergeCachedNewSessions, rememberCachedNewSession, stripCachedNewSessionMarker } from "../cachedNewSessions";
@@ -575,10 +575,33 @@ export class SessionController {
     this.setState({ commandDialog: undefined });
   }
 
-  async navigateTree(targetId: string, summary: SessionTreeSummaryChoice): Promise<SessionTreeNavigateResult> {
+  async actOnMessage(entryId: string, action: "fork" | "back"): Promise<void> {
     const state = this.getState();
     const session = state.selectedSession;
-    const tree = state.treeDialog;
+    if (session === undefined || session.archived === true || isClientPendingStartSessionInfo(session)) return;
+    const machineId = selectedMachineId(state);
+    const errorOwner = this.captureSessionErrorOwner(session);
+    let result: CommandResult;
+    try {
+      result = await this.api.runCommand(session, "/tree", machineId);
+      if (result.type !== "tree") throw new Error("message" in result ? result.message : "Session history is unavailable.");
+      if (!result.tree.nodes.some((node) => node.id === entryId)) throw new Error("This message is no longer available in session history.");
+    } catch (error) {
+      this.reportSessionError(session, machineId, error, errorOwner);
+      throw error;
+    }
+    if (!this.isSelectedSessionIdentity(session.id, machineId)) return;
+    if (action === "fork") await this.forkSessionTree(entryId, result.tree);
+    else await this.navigateSessionTree(entryId, { mode: "none" }, result.tree);
+  }
+
+  async navigateTree(targetId: string, summary: SessionTreeSummaryChoice): Promise<SessionTreeNavigateResult> {
+    return this.navigateSessionTree(targetId, summary, this.getState().treeDialog);
+  }
+
+  private async navigateSessionTree(targetId: string, summary: SessionTreeSummaryChoice, tree: SessionTreeSnapshot | undefined): Promise<SessionTreeNavigateResult> {
+    const state = this.getState();
+    const session = state.selectedSession;
     if (session === undefined || tree === undefined || session.archived === true || isClientPendingStartSessionInfo(session)) {
       throw new Error("The session tree navigator is no longer available");
     }
@@ -628,9 +651,12 @@ export class SessionController {
   }
 
   async forkFromTree(entryId: string): Promise<SessionTreeForkResult> {
+    return this.forkSessionTree(entryId, this.getState().treeDialog);
+  }
+
+  private async forkSessionTree(entryId: string, tree: SessionTreeSnapshot | undefined): Promise<SessionTreeForkResult> {
     const state = this.getState();
     const session = state.selectedSession;
-    const tree = state.treeDialog;
     if (session === undefined || tree === undefined || session.archived === true || isClientPendingStartSessionInfo(session)) {
       throw new Error("The session tree navigator is no longer available");
     }

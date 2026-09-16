@@ -1292,7 +1292,14 @@ export type SessionTreeForkResult =
   | { cancelled: false; session: SessionInfo; promptDraft?: string }
   | { cancelled: true };
 
+/** Browser transcript payload; entryId identifies the durable session-tree entry, not the provider response. */
+export interface TranscriptMessage {
+  entryId?: string;
+  [key: string]: unknown;
+}
+
 export interface MessagePage {
+  /** Opaque SDK payloads, with TranscriptMessage metadata when backed by a durable entry. */
   messages: unknown[];
   start: number;
   total: number;
