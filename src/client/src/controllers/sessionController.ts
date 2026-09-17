@@ -286,7 +286,7 @@ export class SessionController {
     this.socket.close();
     this.streamWatermark = undefined;
     this.clearPendingUpdates();
-    this.notifications?.prepareSelectedSession(session, machineId);
+    if (session.owner === undefined) this.notifications?.prepareSelectedSession(session, machineId);
     const transcriptKey = this.sessionCacheKey(session.id);
     const cached = this.transcripts.cachedView(transcriptKey);
     this.setState({
@@ -319,7 +319,7 @@ export class SessionController {
         (event) => socketBuffer.push(event),
         () => { void this.refreshSelectedSession(session.id); },
         machineId,
-        () => { void this.notifications?.refreshSelectedSession(session, machineId); },
+        session.owner === undefined ? () => { void this.notifications?.refreshSelectedSession(session, machineId); } : undefined,
       );
       const refreshTarget: SelectedSessionRefreshTarget = {
         session,
@@ -330,7 +330,7 @@ export class SessionController {
       };
       await this.requestSelectedSessionRefresh(refreshTarget);
       if (!this.isCurrentRefreshTarget(refreshTarget) || !navigationIsCurrent(options?.navigation)) return;
-      void this.refreshAvailableThinkingLevels();
+      if (session.owner === undefined) void this.refreshAvailableThinkingLevels();
       for (const event of socketBuffer) this.applyEvent(event);
       this.socket.setHandler((event) => { this.applyEvent(event); });
       this.onSelectedSessionReady?.({ machineId, session });
@@ -1318,7 +1318,7 @@ export class SessionController {
         this.api.messages(target.session, { limit: MESSAGE_PAGE_SIZE }, target.machineId),
         this.api.status(target.session, target.machineId),
         this.api.streamSnapshot(target.session, target.machineId),
-        this.notifications?.refreshSelectedSession(target.session, target.machineId) ?? Promise.resolve(),
+        target.session.owner === undefined ? (this.notifications?.refreshSelectedSession(target.session, target.machineId) ?? Promise.resolve()) : Promise.resolve(),
       ]);
       if (!this.isCurrentRefreshTarget(target)) return;
       if (this.isUnchangedSelectedRefresh(target, key, page, status, streamSnapshot)) return;

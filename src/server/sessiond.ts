@@ -18,6 +18,8 @@ import { ModelCatalogRefresher } from "./sessions/modelCatalogRefresher.js";
 import { PiSessionService } from "./sessions/piSessionService.js";
 import { createPiSessionManagerGateway } from "./sessions/piSessionManagerGateway.js";
 import { registerSessionRoutes } from "./sessions/sessionRoutes.js";
+import { ExternalPermissionBridgeRegistry, externalPermissionBridgeDirectory } from "./sessions/externalPermissionBridgeRegistry.js";
+import { SessionOwnerRouter } from "./sessions/sessionOwnerRouter.js";
 import { SessionNotificationStore } from "./sessions/sessionNotificationStore.js";
 import { SessionArchiveStore, defaultSessionArchiveFilePath } from "./sessions/sessionArchiveStore.js";
 import { FileSessionUnreadPersistence, SessionUnreadStore, defaultSessionUnreadFilePath } from "./sessions/sessionUnreadStore.js";
@@ -195,6 +197,7 @@ async function createSessionDaemonRuntime() {
     execFile: createServerPluginExecFile({ env: daemonEnvironment }),
     noticeSink: (source, input) => { serverNotices.record({ ...input, source }); },
   });
+  let externalPermissions: ExternalPermissionBridgeRegistry | undefined;
   try {
     const notificationStore = new SessionNotificationStore();
     const unreadStore = new SessionUnreadStore({
@@ -263,7 +266,11 @@ async function createSessionDaemonRuntime() {
     machineStatus.notifyChanged();
     const projectWorkspaceDeps = { projects, workspaces: workspaceProviders };
     const spawnTargets = config.spawnSessions ? new ProjectScopedSpawnTargetResolver(projectWorkspaceDeps) : undefined;
-    const sessions = new PiSessionService(eventHub, sessionServiceDependencies({
+    const sessionManager = createPiSessionManagerGateway({
+      agentDir: activeAgentProfile.dir,
+      env: daemonEnvironment,
+    });
+    const piSessions = new PiSessionService(eventHub, sessionServiceDependencies({
       modelRuntime: auth.runtime,
       agentDir: activeAgentProfile.dir,
       archiveStore: new SessionArchiveStore(defaultSessionArchiveFilePath(daemonEnvironment)),
@@ -294,12 +301,16 @@ async function createSessionDaemonRuntime() {
       unreadStore,
       onUnreadChanged: () => { machineStatus.notifyChanged(); },
       catalogRefreshStatus: catalogRefresher,
-      sessionManager: createPiSessionManagerGateway({
-        agentDir: activeAgentProfile.dir,
-        env: daemonEnvironment,
-      }),
+      sessionManager,
     }));
-    auth.subscribe((change) => { sessions.applyAuthChange(change); });
+    const permissionRegistry = new ExternalPermissionBridgeRegistry({
+      directory: externalPermissionBridgeDirectory(daemonEnvironment),
+      events: eventHub,
+    });
+    externalPermissions = permissionRegistry;
+    await permissionRegistry.start();
+    const sessions = new SessionOwnerRouter(piSessions, permissionRegistry, sessionManager, eventHub);
+    auth.subscribe((change) => { piSessions.applyAuthChange(change); });
     const terminals = serverPlugins.requiredTerminalService();
     terminals.bindActivitySink({
       updateTerminal: (terminal) => { workspaceActivity.updateTerminal(terminal); },
@@ -325,7 +336,7 @@ async function createSessionDaemonRuntime() {
           serverPlugins,
           catalogRefresher,
           auth,
-          sessions,
+          sessions: piSessions,
           unreadStore,
           pluginBackends,
           closeServer: () => app.close(),
@@ -335,10 +346,16 @@ async function createSessionDaemonRuntime() {
       // Release last: the daemon owns the instance state until everything that
       // writes it is down. Best-effort; a leftover marker goes stale and the
       // next start discards it.
+      await permissionRegistry.stop();
       await stateOwnership.release();
     };
-    return { eventHub, machineStatus, statusAttribution, auth, sessions, serverNotices, unreadStore, activeAgentProfile, runtimeComponent, catalogRefresher, serverPlugins, projects, workspaceProviders, pluginBackends, workspaceProviderRuntime, workspaceRemovals, shutdown };
+    return { eventHub, machineStatus, statusAttribution, auth, sessions, piSessions, serverNotices, unreadStore, activeAgentProfile, runtimeComponent, catalogRefresher, serverPlugins, projects, workspaceProviders, pluginBackends, workspaceProviderRuntime, workspaceRemovals, shutdown };
   } catch (error) {
+    try {
+      await externalPermissions?.stop();
+    } catch (disposeError) {
+      app.log.error({ err: disposeError }, "session daemon construction failed and permission bridge registry disposal was incomplete");
+    }
     try {
       await serverPlugins.stop();
     } catch (disposeError) {
@@ -348,7 +365,7 @@ async function createSessionDaemonRuntime() {
   }
 }
 
-function registerSessionDaemonRoutes({ eventHub, machineStatus, statusAttribution, auth, sessions, serverNotices, runtimeComponent, projects, workspaceProviders, pluginBackends, workspaceProviderRuntime, workspaceRemovals }: SessionDaemonRuntime): void {
+function registerSessionDaemonRoutes({ eventHub, machineStatus, statusAttribution, auth, sessions, piSessions, serverNotices, runtimeComponent, projects, workspaceProviders, pluginBackends, workspaceProviderRuntime, workspaceRemovals }: SessionDaemonRuntime): void {
   registerMachineStatusRoutes(app, machineStatus);
   registerServerNoticeRoutes(app, serverNotices);
   registerAuthRoutes(app, auth);
@@ -377,7 +394,7 @@ function registerSessionDaemonRoutes({ eventHub, machineStatus, statusAttributio
 
   app.get("/health", () => ({
     ok: true,
-    activeSessions: sessions.activeCount(),
+    activeSessions: piSessions.activeCount(),
     checkedAt: new Date().toISOString(),
     version: {
       component: runtimeComponent.component,

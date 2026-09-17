@@ -207,6 +207,7 @@ describe("PendingExtensionDialogStore answer", () => {
     expect(answer("dialog-1", "yes")).toThrow(/expects a boolean answer/);
     expect(answer("dialog-2", true)).toThrow(/has no option true/);
     expect(answer("dialog-2", "c")).toThrow(/has no option c/);
+    expect(answer("dialog-2", { choiceId: "external" })).toThrow(/has no option non-string answer/);
     expect(answer("dialog-3", false)).toThrow(/expects a text answer/);
     expect(answer("dialog-3", "x".repeat(EXTENSION_DIALOG_INPUT_MAX_LENGTH + 1))).toThrow(/exceeds its length limit/);
     expect(store.pendingDialogs(sessionId).map((dialog) => dialog.dialogId)).toEqual(["dialog-1", "dialog-2", "dialog-3"]);

@@ -602,8 +602,18 @@ export interface SessionNotificationSummaryEvent {
   summary: SessionNotificationSummary;
 }
 
+export interface ExternalSessionOwner {
+  kind: "external-pi";
+  source: "herdr";
+  state: "ready" | "unavailable" | "gone" | "conflict";
+  /** Opaque owner generation for presentation and stale-answer fencing. */
+  incarnation: string;
+}
+
 export interface SessionInfo extends SessionRef {
   path: string;
+  /** Present only when another verified Pi process owns this session runtime. */
+  owner?: ExternalSessionOwner;
   /** True when the server has verified a backing session file exists; false when known transient. */
   persisted?: boolean;
   name?: string;
@@ -850,13 +860,18 @@ export type ExtensionDialogKind = "confirm" | "select" | "input";
  * chosen option for `select`, the typed text for `input`. Absent when the
  * dialog closed without an answer.
  */
-export type ExtensionDialogAnswer = boolean | string;
+export interface ExtensionDialogChoiceAnswer {
+  choiceId: string;
+  denialReason?: string;
+}
+
+export type ExtensionDialogAnswer = boolean | string | ExtensionDialogChoiceAnswer;
 
 /**
  * Why a dialog stopped being open. `"answered"` carries an
  * {@link ExtensionDialogAnswer}; every other reason is a close without one.
  */
-export type ExtensionDialogCloseReason = "answered" | "cancelled" | "timeout" | "aborted" | "session-ended";
+export type ExtensionDialogCloseReason = "answered" | "peer-answered" | "cancelled" | "timeout" | "aborted" | "session-ended";
 
 /**
  * One open extension dialog of a session, opened by `ctx.ui.confirm()`,
@@ -874,8 +889,14 @@ export interface PendingExtensionDialog {
   title: string;
   /** Supporting line of a `confirm` dialog. */
   message?: string;
-  /** Offered choices of a `select` dialog. */
+  /** Offered display labels of a `select` dialog. */
   options?: string[];
+  /** Opaque answer values paired positionally with `options`; absent for ordinary extension dialogs. */
+  optionValues?: string[];
+  /** Per-option denial-reason contract paired positionally with `options`. */
+  optionDenialReasons?: ("forbidden" | "required")[];
+  /** False when only another presentation peer may withdraw the request. */
+  cancellable?: boolean;
   /** Placeholder text of an `input` dialog. */
   placeholder?: string;
   askedAt: string;

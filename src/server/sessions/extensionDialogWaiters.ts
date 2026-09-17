@@ -83,6 +83,7 @@ export class ExtensionDialogWaiters {
 
   /** Resolve the parked wait with the user's answer, which the store has already validated and recorded. */
   settleWithAnswer(dialogId: string, answer: ExtensionDialogAnswer): boolean {
+    if (typeof answer === "object") throw new Error("External permission choice cannot settle a local extension dialog");
     return this.settle(dialogId, (parked) => { parked.resolve(answer); });
   }
 

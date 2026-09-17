@@ -82,6 +82,58 @@ describe("extension-dialog-card select dialog", () => {
     expect(onAnswer).toHaveBeenCalledWith("dlg-1", "Production");
     expect(onAnswer).toHaveBeenCalledOnce();
   });
+
+  it("renders mobile-safe permission labels but submits opaque choice ids without a cancel control", async () => {
+    const onAnswer = vi.fn<ExtensionDialogAnswerCallback>();
+    const onCancel = vi.fn<ExtensionDialogCancelCallback>();
+    const card = await mountOpenDialog(openDialog({
+      kind: "select",
+      title: "Permission Required",
+      message: "write /tmp/effect",
+      options: ["Yes", "No"],
+      optionValues: ["allow-token", "deny-token"],
+      cancellable: false,
+    }), { onAnswer, onCancel });
+    const root = renderRoot(card);
+
+    expect(root.querySelector(".dialog-message")?.textContent).toBe("write /tmp/effect");
+    expect(buttonsWithText(root, "Cancel")).toHaveLength(0);
+    buttonWithText(root, "Yes").click();
+    await Promise.resolve();
+
+    expect(onAnswer).toHaveBeenCalledWith("dlg-1", "allow-token");
+    expect(onCancel).not.toHaveBeenCalled();
+  });
+
+  it("collects a required denial reason before submitting the opaque choice", async () => {
+    const onAnswer = vi.fn<ExtensionDialogAnswerCallback>();
+    const card = await mountOpenDialog(openDialog({
+      kind: "select",
+      title: "Permission Required",
+      options: ["Yes", "No, provide reason", "No"],
+      optionValues: ["allow-token", "reason-token", "deny-token"],
+      optionDenialReasons: ["forbidden", "required", "forbidden"],
+      cancellable: false,
+    }), { onAnswer });
+    const root = renderRoot(card);
+
+    buttonWithText(root, "No, provide reason").click();
+    await card.updateComplete;
+    const input = requiredElement(root.querySelector("input"), "denial reason input");
+    const send = buttonWithText(root, "Send");
+    expect(send.disabled).toBe(true);
+    input.value = "unsafe path";
+    input.dispatchEvent(new Event("input", { bubbles: true, composed: true }));
+    await card.updateComplete;
+    expect(send.disabled).toBe(false);
+    send.click();
+    await Promise.resolve();
+
+    expect(onAnswer).toHaveBeenCalledWith("dlg-1", {
+      choiceId: "reason-token",
+      denialReason: "unsafe path",
+    });
+  });
 });
 
 describe("extension-dialog-card input dialog", () => {
@@ -244,6 +296,7 @@ describe("extensionDialogCountdownText", () => {
 describe("extensionDialogCloseLabel and extensionDialogCloseSummary", () => {
   it("labels every close reason", () => {
     expect(extensionDialogCloseLabel("answered")).toBe("Answered");
+    expect(extensionDialogCloseLabel("peer-answered")).toBe("Answered elsewhere");
     expect(extensionDialogCloseLabel("cancelled")).toBe("Cancelled");
     expect(extensionDialogCloseLabel("timeout")).toBe("Timed out");
     expect(extensionDialogCloseLabel("aborted")).toBe("Aborted");
@@ -257,6 +310,7 @@ describe("extensionDialogCloseLabel and extensionDialogCloseSummary", () => {
   });
 
   it("summarizes closes without an answer", () => {
+    expect(extensionDialogCloseSummary(closedDialog("peer-answered"))).toBe("Answered from another connected presentation.");
     expect(extensionDialogCloseSummary(closedDialog("cancelled"))).toBe("Dismissed without an answer.");
     expect(extensionDialogCloseSummary(closedDialog("timeout"))).toContain("timed out");
     expect(extensionDialogCloseSummary(closedDialog("aborted"))).toContain("run ended");

@@ -105,6 +105,16 @@ describe("SessionController extension dialog state", () => {
     expect(harness.state().closedDialogs).toEqual([{ dialog: dialog("dialog-1", "select"), reason: "answered", answer: "SQLite" }]);
   });
 
+  it("withdraws the browser card when the native permission peer wins", async () => {
+    const pending = dialog("dialog-1", "select");
+    const harness = await liveSession({}, statusWithDialogs(oldSession.id, [pending]));
+
+    harness.socket.emit({ type: "dialog.closed", dialogId: "dialog-1", reason: "peer-answered" });
+
+    expect(harness.state().pendingDialogs).toEqual([]);
+    expect(harness.state().closedDialogs).toEqual([{ dialog: pending, reason: "peer-answered" }]);
+  });
+
   it("records a close without an answer for cancel-like reasons", async () => {
     const harness = await liveSession();
 

@@ -12,6 +12,7 @@ import {
   isTemplateResult,
   templateClickHandlerForText,
   templateStrings,
+  templateText,
   templateValues,
   type TemplateEventHandler,
 } from "../templateInspection.testSupport";
@@ -95,6 +96,22 @@ describe("session action eligibility", () => {
     expect(isTransientNewSessionInfo(stalePersisted, sessionStatus("s", { persisted: false }))).toBe(true);
 
     expect(isArchivableSessionInfo(staleTransient, sessionStatus("other", { persisted: true }))).toBe(false);
+  });
+});
+
+describe("externally owned session rows", () => {
+  it("shows the Herdr blocked state without exposing session actions", () => {
+    const external = session("external", {
+      owner: { kind: "external-pi", source: "herdr", state: "ready", incarnation: "linux:42:10" },
+    });
+    const list = sessionList([external], new Set());
+    list.statuses = { external: sessionStatus("external", { pendingDialogs: [{ dialogId: "permission-1", kind: "select", title: "Permission Required", options: ["Yes", "No"], askedAt: "2026-09-17T00:00:00.000Z", runScoped: true }] }) };
+
+    const rendered = templateText(renderList(list));
+
+    expect(rendered).toContain("Herdr");
+    expect(rendered).toContain("Blocked");
+    expect(rendered).not.toContain("Session actions");
   });
 });
 

@@ -271,10 +271,12 @@ export function parseSessionInfo(value: unknown): SessionInfo {
   const persisted = parseOptionalBoolean(record["persisted"], "persisted");
   const parentSessionPath = optionalString(record, "parentSessionPath");
   const archivedAt = optionalString(record, "archivedAt");
+  const owner = parseExternalSessionOwner(record["owner"]);
   return {
     id: requireString(record, "id"),
     path: requireString(record, "path"),
     cwd: requireString(record, "cwd"),
+    ...(owner === undefined ? {} : { owner }),
     ...(persisted === undefined ? {} : { persisted }),
     ...(name === undefined ? {} : { name }),
     created: requireString(record, "created"),
@@ -285,6 +287,17 @@ export function parseSessionInfo(value: unknown): SessionInfo {
     ...(record["archived"] === true ? { archived: true } : {}),
     ...(archivedAt === undefined ? {} : { archivedAt }),
   };
+}
+
+function parseExternalSessionOwner(value: unknown): SessionInfo["owner"] {
+  if (value === undefined) return undefined;
+  const record = requireRecord(value);
+  if (record["kind"] !== "external-pi" || record["source"] !== "herdr") throw new Error("Invalid external session owner");
+  const state = record["state"];
+  if (state !== "ready" && state !== "unavailable" && state !== "gone" && state !== "conflict") {
+    throw new Error("Invalid external session owner state");
+  }
+  return { kind: "external-pi", source: "herdr", state, incarnation: requireNonEmptyString(record, "incarnation") };
 }
 
 function parseSessionWarningSeverity(value: unknown): SessionWarningSeverity {
@@ -457,7 +470,7 @@ function parseExtensionDialogKind(value: unknown): ExtensionDialogKind {
 }
 
 function parseExtensionDialogCloseReason(value: unknown): ExtensionDialogCloseReason {
-  if (value !== "answered" && value !== "cancelled" && value !== "timeout" && value !== "aborted" && value !== "session-ended") {
+  if (value !== "answered" && value !== "peer-answered" && value !== "cancelled" && value !== "timeout" && value !== "aborted" && value !== "session-ended") {
     throw new Error("Invalid extension dialog close reason");
   }
   return value;
@@ -466,6 +479,11 @@ function parseExtensionDialogCloseReason(value: unknown): ExtensionDialogCloseRe
 function parseExtensionDialogAnswer(value: unknown): ExtensionDialogAnswer {
   if (typeof value === "boolean") return value;
   if (typeof value === "string" && value.length <= EXTENSION_DIALOG_INPUT_MAX_LENGTH) return value;
+  if (isRecord(value)) {
+    const choiceId = requireBoundedNonEmptyString(value, "choiceId", EXTENSION_DIALOG_TEXT_MAX_LENGTH);
+    const denialReason = optionalBoundedNonEmptyString(value, "denialReason", EXTENSION_DIALOG_INPUT_MAX_LENGTH);
+    return { choiceId, ...(denialReason === undefined ? {} : { denialReason }) };
+  }
   throw new Error("Invalid extension dialog answer");
 }
 
@@ -473,6 +491,11 @@ function parseExtensionDialogOption(value: unknown): string {
   const option = parseNonEmptyString(value);
   if (option.length > EXTENSION_DIALOG_TEXT_MAX_LENGTH) throw new Error("String field exceeds limit: option");
   return option;
+}
+
+function parseDenialReasonRequirement(value: unknown): "forbidden" | "required" {
+  if (value !== "forbidden" && value !== "required") throw new Error("Invalid dialog option denial contract");
+  return value;
 }
 
 /**
@@ -488,6 +511,20 @@ function parsePendingExtensionDialog(value: unknown): PendingExtensionDialog {
     ? undefined
     : boundedArrayOf(record["options"], parseExtensionDialogOption, EXTENSION_DIALOG_OPTION_LIMIT, "options");
   if (options !== undefined) assertUniqueStrings(options, "dialog option");
+  const optionValues = record["optionValues"] === undefined
+    ? undefined
+    : boundedArrayOf(record["optionValues"], parseExtensionDialogOption, EXTENSION_DIALOG_OPTION_LIMIT, "optionValues");
+  if (optionValues !== undefined) {
+    assertUniqueStrings(optionValues, "dialog option value");
+    if (options?.length !== optionValues.length) throw new Error("Dialog option values mismatch");
+  }
+  const optionDenialReasons = record["optionDenialReasons"] === undefined
+    ? undefined
+    : boundedArrayOf(record["optionDenialReasons"], parseDenialReasonRequirement, EXTENSION_DIALOG_OPTION_LIMIT, "optionDenialReasons");
+  if (optionDenialReasons !== undefined && (optionValues === undefined || options?.length !== optionDenialReasons.length)) {
+    throw new Error("Dialog option denial contracts mismatch");
+  }
+  const cancellable = parseOptionalBoolean(record["cancellable"], "cancellable");
   if (kind === "select" && (options === undefined || options.length === 0)) throw new Error("Select dialog has no options");
   return {
     dialogId: requireBoundedNonEmptyString(record, "dialogId", EXTENSION_DIALOG_ID_MAX_LENGTH),
@@ -495,6 +532,9 @@ function parsePendingExtensionDialog(value: unknown): PendingExtensionDialog {
     title: requireBoundedNonEmptyString(record, "title", EXTENSION_DIALOG_TEXT_MAX_LENGTH),
     ...optionalField("message", optionalBoundedNonEmptyString(record, "message", EXTENSION_DIALOG_TEXT_MAX_LENGTH)),
     ...(options === undefined ? {} : { options }),
+    ...(optionValues === undefined ? {} : { optionValues }),
+    ...(optionDenialReasons === undefined ? {} : { optionDenialReasons }),
+    ...(cancellable === undefined ? {} : { cancellable }),
     ...optionalField("placeholder", optionalBoundedNonEmptyString(record, "placeholder", EXTENSION_DIALOG_TEXT_MAX_LENGTH)),
     askedAt: requireNonEmptyString(record, "askedAt"),
     ...optionalField("timeoutAt", optionalNonEmptyString(record, "timeoutAt")),
@@ -520,8 +560,8 @@ export function parseSessionDialogClosedEvent(value: unknown): { type: "dialog.c
   if (record["type"] !== "dialog.closed") throw new Error("Invalid dialog closed event type");
   const reason = parseExtensionDialogCloseReason(record["reason"]);
   const answer = record["answer"] === undefined ? undefined : parseExtensionDialogAnswer(record["answer"]);
-  // Only an answered close carries a value; any other combination cannot be
-  // rendered honestly as the dialog's result.
+  // Only the browser-winner close carries a value. A peer winner is answered
+  // authoritatively but has no browser answer value.
   if ((reason === "answered") !== (answer !== undefined)) throw new Error("Dialog closed event answer mismatch");
   return {
     type: "dialog.closed",
@@ -682,10 +722,13 @@ function requireSessionActivityPhase(record: Record<string, unknown>, key: strin
 export function parseSessionStreamEvent(value: unknown): SessionUiEvent {
   const record = requireRecord(value);
   switch (record["type"]) {
-    case "message.append":
+    case "message.append": {
       // The message payload is a projected Pi message; only its presence is
       // guaranteed at this boundary.
-      return { type: "message.append", message: requirePresent(record, "message") };
+      const message = record["message"];
+      if (message === undefined) throw new Error("Expected field: message");
+      return { type: "message.append", message };
+    }
     case "assistant.delta":
       return { type: "assistant.delta", text: requireString(record, "text") };
     case "assistant.thinking.delta":
@@ -784,12 +827,6 @@ export function parseRealtimeStreamEvent(value: unknown): RealtimeStreamEvent {
     default:
       throw new Error("Unsupported realtime stream event type");
   }
-}
-
-function requirePresent(record: Record<string, unknown>, key: string): unknown {
-  const value = record[key];
-  if (value === undefined) throw new Error(`Expected field: ${key}`);
-  return value;
 }
 
 function optionalNumberOrNull(record: Record<string, unknown>, key: string): number | null | undefined {

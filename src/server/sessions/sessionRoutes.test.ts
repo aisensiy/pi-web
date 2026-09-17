@@ -563,6 +563,11 @@ describe("session routes", () => {
         url: "/sessions/session-1/dialogs/answer",
         payload: { cwd: "/repo", dialogId: "dialog-2", value: "typed text" },
       });
+      const answeredChoice = await routeApp.inject({
+        method: "POST",
+        url: "/sessions/session-1/dialogs/answer",
+        payload: { cwd: "/repo", dialogId: "dialog-3", value: { choiceId: "reason-token", denialReason: "unsafe path" } },
+      });
       const cancelled = await routeApp.inject({
         method: "POST",
         url: "/sessions/session-1/dialogs/cancel",
@@ -572,9 +577,11 @@ describe("session routes", () => {
       expect(answered.statusCode).toBe(200);
       expect(answered.json()).toMatchObject({ result: "closed", sessionStatus: { sessionId: "session-1" } });
       expect(answeredText.statusCode).toBe(200);
+      expect(answeredChoice.statusCode).toBe(200);
       expect(routeService.answerDialogCalls).toEqual([
         { lookup: { id: "session-1", cwd: resolve("/repo") }, dialogId: "dialog-1", value: true },
         { lookup: { id: "session-1", cwd: resolve("/repo") }, dialogId: "dialog-2", value: "typed text" },
+        { lookup: { id: "session-1", cwd: resolve("/repo") }, dialogId: "dialog-3", value: { choiceId: "reason-token", denialReason: "unsafe path" } },
       ]);
       expect(cancelled.statusCode).toBe(200);
       expect(cancelled.json()).toMatchObject({ result: "stale" });
@@ -598,6 +605,10 @@ describe("session routes", () => {
       { dialogId: "dialog-1" },
       { dialogId: "dialog-1", value: 7 },
       { dialogId: "dialog-1", value: ["option"] },
+      { dialogId: "dialog-1", value: {} },
+      { dialogId: "dialog-1", value: { choiceId: "" } },
+      { dialogId: "dialog-1", value: { choiceId: "choice", denialReason: 7 } },
+      { dialogId: "dialog-1", value: { choiceId: "choice", denialReason: "x".repeat(EXTENSION_DIALOG_INPUT_MAX_LENGTH + 1) } },
       { dialogId: "dialog-1", value: "x".repeat(EXTENSION_DIALOG_INPUT_MAX_LENGTH + 1) },
     ];
 

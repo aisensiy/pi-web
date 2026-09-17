@@ -57,6 +57,14 @@ describe("ExtensionDialogWaiters", () => {
     await expect(parked).resolves.toBe(true);
   });
 
+  it("rejects external choice objects at the local SDK waiter boundary", async () => {
+    const waiters = new ExtensionDialogWaiters();
+    const parked = waiters.park(dialog());
+
+    expect(() => waiters.settleWithAnswer("dialog-1", { choiceId: "external" })).toThrow("cannot settle a local extension dialog");
+    await expect(settledValue(parked)).resolves.toEqual({ settled: false });
+  });
+
   it("resolves a close without an answer with the dialog kind's cancel value", async () => {
     const waiters = new ExtensionDialogWaiters();
     const confirm = waiters.park(dialog({ dialogId: "dialog-1", kind: "confirm" }));

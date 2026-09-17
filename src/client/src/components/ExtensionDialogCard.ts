@@ -19,6 +19,7 @@ const COUNTDOWN_TICK_MS = 1_000;
 export function extensionDialogCloseLabel(reason: ExtensionDialogCloseReason): string {
   switch (reason) {
     case "answered": return "Answered";
+    case "peer-answered": return "Answered elsewhere";
     case "cancelled": return "Cancelled";
     case "timeout": return "Timed out";
     case "aborted": return "Aborted";
@@ -35,8 +36,10 @@ export function extensionDialogCloseSummary(closed: ClosedExtensionDialog): stri
       // the card still renders rather than crashing the transcript.
       if (answer === undefined) return "Closed without an answer.";
       if (typeof answer === "boolean") return `Answered: ${answer ? "Yes" : "No"}`;
+      if (typeof answer === "object") return "Answered with a permission choice.";
       return answer === "" ? "Answered with an empty response." : `Answered: ${answer}`;
     }
+    case "peer-answered": return "Answered from another connected presentation.";
     case "cancelled": return "Dismissed without an answer.";
     case "timeout": return "No answer was given before the dialog timed out.";
     case "aborted": return "The run ended before this dialog was answered.";
@@ -89,6 +92,7 @@ export class ExtensionDialogCard extends LitElement {
 
   @state() private inputValue = "";
   @state() private closing = false;
+  @state() private reasonChoiceIndex: number | undefined;
   @state() private countdownNow = 0;
   private dialogIdentity: string | undefined;
   private countdownTimer: number | undefined;
@@ -113,6 +117,7 @@ export class ExtensionDialogCard extends LitElement {
       this.dialogIdentity = identity;
       this.inputValue = "";
       this.closing = false;
+      this.reasonChoiceIndex = undefined;
     }
     this.syncCountdownTimer();
   }
@@ -159,15 +164,41 @@ export class ExtensionDialogCard extends LitElement {
   }
 
   private renderSelectBody(dialog: PendingExtensionDialog): TemplateResult {
+    if (this.reasonChoiceIndex !== undefined) return this.renderSelectReasonBody(dialog, this.reasonChoiceIndex);
     return html`
+      ${dialog.message === undefined ? null : html`<p class="dialog-message">${dialog.message}</p>`}
       <div class="dialog-options" role="group" aria-label="Choices">
-        ${(dialog.options ?? []).map((option) => html`
-          <button class="option-button" type="button" ?disabled=${this.closing} @click=${() => { this.answerDialog(dialog, option); }}>${option}</button>
+        ${(dialog.options ?? []).map((option, index) => html`
+          <button class="option-button" type="button" ?disabled=${this.closing} @click=${() => { this.selectOption(dialog, index); }}>${option}</button>
         `)}
       </div>
-      <footer class="dialog-footer">
-        <button class="secondary-action" type="button" ?disabled=${this.closing} @click=${() => { this.cancelDialog(dialog); }}>Cancel</button>
-      </footer>
+      ${dialog.cancellable === false ? null : html`
+        <footer class="dialog-footer">
+          <button class="secondary-action" type="button" ?disabled=${this.closing} @click=${() => { this.cancelDialog(dialog); }}>Cancel</button>
+        </footer>
+      `}
+    `;
+  }
+
+  private renderSelectReasonBody(dialog: PendingExtensionDialog, optionIndex: number): TemplateResult {
+    return html`
+      <form class="dialog-input-form" @submit=${(event: SubmitEvent) => { this.submitSelectReason(event, dialog, optionIndex); }}>
+        <input
+          class="dialog-input"
+          type="text"
+          name="permission-denial-reason"
+          aria-label="Reason for denial"
+          placeholder="Reason shown back to the agent"
+          maxlength=${String(EXTENSION_DIALOG_INPUT_MAX_LENGTH)}
+          .value=${this.inputValue}
+          ?disabled=${this.closing}
+          @input=${(event: Event) => { this.changeInput(event); }}
+        />
+        <footer class="dialog-footer">
+          <button class="secondary-action" type="button" ?disabled=${this.closing} @click=${() => { this.reasonChoiceIndex = undefined; this.inputValue = ""; }}>Back</button>
+          <button class="primary-action" type="submit" ?disabled=${this.closing || this.inputValue.trim() === ""}>${this.closing ? "Sending…" : "Send"}</button>
+        </footer>
+      </form>
     `;
   }
 
@@ -208,6 +239,18 @@ export class ExtensionDialogCard extends LitElement {
     `;
   }
 
+  private selectOption(dialog: PendingExtensionDialog, optionIndex: number): void {
+    const option = dialog.options?.[optionIndex];
+    const value = dialog.optionValues?.[optionIndex] ?? option;
+    if (value === undefined) return;
+    if (dialog.optionDenialReasons?.[optionIndex] === "required") {
+      this.reasonChoiceIndex = optionIndex;
+      this.inputValue = "";
+      return;
+    }
+    this.answerDialog(dialog, value);
+  }
+
   private answerDialog(dialog: PendingExtensionDialog, value: ExtensionDialogAnswer): void {
     this.closeWith(dialog, () => this.onAnswer?.(dialog.dialogId, value));
   }
@@ -220,6 +263,14 @@ export class ExtensionDialogCard extends LitElement {
     event.preventDefault();
     // An empty string is a valid input answer, so Send stays enabled.
     this.answerDialog(dialog, this.inputValue);
+  }
+
+  private submitSelectReason(event: SubmitEvent, dialog: PendingExtensionDialog, optionIndex: number): void {
+    event.preventDefault();
+    const choiceId = dialog.optionValues?.[optionIndex];
+    const denialReason = this.inputValue.trim();
+    if (choiceId === undefined || denialReason === "") return;
+    this.answerDialog(dialog, { choiceId, denialReason });
   }
 
   private closeWith(dialog: PendingExtensionDialog, close: () => void | Promise<void>): void {

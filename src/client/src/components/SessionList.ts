@@ -275,7 +275,7 @@ export class SessionList extends LitElement implements KeyboardNavigableSection 
   private renderSession(row: SessionRow, descendantCount: number, scope: SessionSelectionScope) {
     const { session } = row;
     const cappedDepth = Math.min(row.depth, 2);
-    const canBulkSelect = sessionSelectionScope(session) === scope;
+    const canBulkSelect = session.owner === undefined && sessionSelectionScope(session) === scope;
     const selectionActive = this.selectionScopes.has(scope);
     const showsCheckbox = selectionActive && canBulkSelect;
     const bulkSelected = showsCheckbox && this.selectedSessionIds.has(session.id);
@@ -283,7 +283,7 @@ export class SessionList extends LitElement implements KeyboardNavigableSection 
     const activity = this.activities[session.id];
     const indicatorKind = sessionRowActivityKind(session, status, activity, this.sending[session.id] === true);
     const unread = sessionRowUnread(session, this.unreadSessionIds);
-    const canArchive = isArchivableSessionInfo(session, status);
+    const canArchive = session.owner === undefined && isArchivableSessionInfo(session, status);
     const canDeleteTransient = isTransientNewSessionInfo(session, status);
     return html`
       <div
@@ -299,7 +299,7 @@ export class SessionList extends LitElement implements KeyboardNavigableSection 
           <span class="action-name-line"><span class="action-name" dir="auto">${this.renderRowMarker(row)}${sessionLabel(session)}</span>${this.renderRowBadges(row)}</span><small>${this.renderSessionMetaPrefix(session, status, activity)}${String(session.messageCount)} messages</small>
           ${this.renderActivity(indicatorKind, unread)}
         </div>
-        <div class="action-menu">
+        ${session.owner !== undefined ? null : html`<div class="action-menu">
           <button class="action-menu-toggle" title="Session actions" @click=${(event: MouseEvent) => { event.stopPropagation(); this.toggleMenu(session.id, event.currentTarget); }}>⋯</button>
           ${this.openMenuSessionId === session.id ? html`
             <div class="action-menu-panel" style=${this.menuStyle}>
@@ -321,7 +321,7 @@ export class SessionList extends LitElement implements KeyboardNavigableSection 
                   `}
             </div>
           ` : null}
-        </div>
+        </div>`}
       </div>
     `;
   }
@@ -344,8 +344,12 @@ export class SessionList extends LitElement implements KeyboardNavigableSection 
    * hide them.
    */
   private renderRowBadges(row: SessionRow) {
-    if (row.depth <= 2) return null;
-    return html`<span class="row-badges"><span class="badge">depth ${row.depth}</span></span>`;
+    const owner = row.session.owner;
+    if (row.depth <= 2 && owner === undefined) return null;
+    return html`<span class="row-badges">
+      ${owner === undefined ? null : html`<span class="badge" title=${`Original Pi owner: ${owner.state}`}>Herdr</span>`}
+      ${row.depth <= 2 ? null : html`<span class="badge">depth ${row.depth}</span>`}
+    </span>`;
   }
 
   private handleSessionKeydown(event: KeyboardEvent, session: SessionInfo, scope: SessionSelectionScope): void {
@@ -471,6 +475,11 @@ export class SessionList extends LitElement implements KeyboardNavigableSection 
       return "new · ";
     }
     if (session.archived === true) return "read-only · ";
+    if (session.owner !== undefined) {
+      if (session.owner.state !== "ready") return `${session.owner.state} · Herdr · `;
+      if ((status?.pendingDialogs?.length ?? 0) > 0) return "Blocked · Herdr · ";
+      return "Herdr · ";
+    }
     return "";
   }
 

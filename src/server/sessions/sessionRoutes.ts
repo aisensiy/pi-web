@@ -1,5 +1,5 @@
 import type { FastifyInstance, FastifyReply } from "fastify";
-import { ASK_USER_ID_MAX_LENGTH, ASK_USER_OPTION_LIMIT, ASK_USER_OTHER_TEXT_MAX_LENGTH, ASK_USER_QUESTION_LIMIT, EXTENSION_DIALOG_ID_MAX_LENGTH, EXTENSION_DIALOG_INPUT_MAX_LENGTH, SESSION_TREE_CUSTOM_INSTRUCTIONS_MAX_LENGTH, SESSION_UNREAD_CATALOG_ID_MAX_LENGTH, SESSION_UNREAD_CWD_MAX_LENGTH, SESSION_UNREAD_SESSION_ID_MAX_LENGTH, type AskUserAnswer, type AskUserSubmission, type ExtensionDialogAnswerRequest, type ExtensionDialogCancelRequest, type SessionBulkMutationRequest, type SessionBulkMutationRef, type SessionCleanupRequest, type SessionModelScopeMode, type SessionTreeForkRequest, type SessionTreeNavigateRequest, type SessionTreeSummaryChoice, type SessionUnreadAcknowledgeRequest } from "../../shared/apiTypes.js";
+import { ASK_USER_ID_MAX_LENGTH, ASK_USER_OPTION_LIMIT, ASK_USER_OTHER_TEXT_MAX_LENGTH, ASK_USER_QUESTION_LIMIT, EXTENSION_DIALOG_ID_MAX_LENGTH, EXTENSION_DIALOG_INPUT_MAX_LENGTH, EXTENSION_DIALOG_TEXT_MAX_LENGTH, SESSION_TREE_CUSTOM_INSTRUCTIONS_MAX_LENGTH, SESSION_UNREAD_CATALOG_ID_MAX_LENGTH, SESSION_UNREAD_CWD_MAX_LENGTH, SESSION_UNREAD_SESSION_ID_MAX_LENGTH, type AskUserAnswer, type AskUserSubmission, type ExtensionDialogAnswerRequest, type ExtensionDialogCancelRequest, type SessionBulkMutationRequest, type SessionBulkMutationRef, type SessionCleanupRequest, type SessionModelScopeMode, type SessionTreeForkRequest, type SessionTreeNavigateRequest, type SessionTreeSummaryChoice, type SessionUnreadAcknowledgeRequest } from "../../shared/apiTypes.js";
 import { parseSessionDefaultsUpdate } from "../../shared/sessionDefaults.js";
 import { projectBrowserMessageResponse } from "../browserMessageProjection.js";
 import { normalizeRequestCwd } from "../workingDirectory.js";
@@ -674,7 +674,15 @@ function extensionDialogAnswerFromBody(body: Record<string, unknown>): Extension
     if (value.length > EXTENSION_DIALOG_INPUT_MAX_LENGTH) throw new Error("value field is too long");
     return { dialogId, value };
   }
-  throw new Error("value field must be a string or a boolean");
+  if (isRecord(value)) {
+    const choiceId = requireNonEmptyBoundedString(value["choiceId"], "choiceId", EXTENSION_DIALOG_TEXT_MAX_LENGTH);
+    const denialReason = value["denialReason"];
+    if (denialReason !== undefined && (typeof denialReason !== "string" || denialReason.length > EXTENSION_DIALOG_INPUT_MAX_LENGTH)) {
+      throw new Error("denialReason field is invalid");
+    }
+    return { dialogId, value: { choiceId, ...(denialReason === undefined ? {} : { denialReason }) } };
+  }
+  throw new Error("value field must be a string, boolean, or choice answer");
 }
 
 function extensionDialogCancelFromBody(body: Record<string, unknown>): ExtensionDialogCancelRequest {

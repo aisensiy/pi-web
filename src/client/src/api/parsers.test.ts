@@ -537,6 +537,7 @@ describe("API parsers", () => {
       cwd: "/repo",
       persisted: false,
       name: "Draft session",
+      owner: { kind: "external-pi", source: "herdr", state: "ready", incarnation: "linux:10:20" },
       created: "2026-01-01T00:00:00.000Z",
       modified: "2026-01-01T00:01:00.000Z",
       messageCount: 0,
@@ -547,12 +548,14 @@ describe("API parsers", () => {
       cwd: "/repo",
       persisted: false,
       name: "Draft session",
+      owner: { kind: "external-pi", source: "herdr", state: "ready", incarnation: "linux:10:20" },
       created: "2026-01-01T00:00:00.000Z",
       modified: "2026-01-01T00:01:00.000Z",
       messageCount: 0,
       firstMessage: "",
     });
     expect(() => parseSessionInfo({ id: "s1", path: "", cwd: "/repo", persisted: "yes", created: "now", modified: "now", messageCount: 0, firstMessage: "" })).toThrow("Expected optional boolean field: persisted");
+    expect(() => parseSessionInfo({ id: "s1", path: "", cwd: "/repo", owner: { kind: "external-pi", source: "herdr", state: "ready", incarnation: "" }, created: "now", modified: "now", messageCount: 0, firstMessage: "" })).toThrow("Expected non-empty string field: incarnation");
   });
 
   it("parses the model catalog with enabled state and natural catalog positions", () => {
@@ -1086,6 +1089,21 @@ describe("API parsers", () => {
       { dialogId: "dialog-2", kind: "select", title: "Pick a database", options: ["Postgres", "SQLite"], askedAt: "2026-07-20T00:01:00.000Z", timeoutAt: "2026-07-20T00:06:00.000Z", runScoped: false },
       { dialogId: "dialog-3", kind: "input", title: "Name the branch", placeholder: "feature/...", askedAt: "2026-07-20T00:02:00.000Z", runScoped: false },
     ]);
+  });
+
+  it("parses opaque permission choices and non-cancellable presentation state", () => {
+    const dialog = { ...selectDialogWire(), message: "write /tmp/effect", optionValues: ["allow-token", "deny-token"], optionDenialReasons: ["forbidden", "required"], cancellable: false };
+
+    expect(parseSessionStatus({ ...statusWire(), pendingDialogs: [dialog] }).pendingDialogs?.[0]).toMatchObject({
+      options: ["Postgres", "SQLite"],
+      optionValues: ["allow-token", "deny-token"],
+      optionDenialReasons: ["forbidden", "required"],
+      cancellable: false,
+    });
+    expect(() => parseSessionStatus({ ...statusWire(), pendingDialogs: [{ ...dialog, optionValues: ["only-one"] }] })).toThrow("Dialog option values mismatch");
+    expect(() => parseSessionStatus({ ...statusWire(), pendingDialogs: [{ ...dialog, optionValues: ["same", "same"] }] })).toThrow("Duplicate dialog option value");
+    expect(() => parseSessionStatus({ ...statusWire(), pendingDialogs: [{ ...dialog, optionDenialReasons: ["required"] }] })).toThrow("Dialog option denial contracts mismatch");
+    expect(() => parseSessionStatus({ ...statusWire(), pendingDialogs: [{ ...dialog, optionDenialReasons: ["sometimes", "required"] }] })).toThrow("Invalid dialog option denial contract");
   });
 
   it("omits pending dialogs entirely when the field is absent", () => {

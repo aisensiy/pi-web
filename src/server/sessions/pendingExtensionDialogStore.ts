@@ -163,7 +163,8 @@ function validateAnswer(dialog: PendingExtensionDialog, value: ExtensionDialogAn
       return value;
     case "select":
       if (typeof value !== "string" || dialog.options?.includes(value) !== true) {
-        throw new PendingExtensionDialogValidationError(`Dialog ${dialog.dialogId} has no option ${String(value)}`);
+        const displayValue = typeof value === "object" ? "non-string answer" : String(value);
+        throw new PendingExtensionDialogValidationError(`Dialog ${dialog.dialogId} has no option ${displayValue}`);
       }
       return value;
     case "input":
