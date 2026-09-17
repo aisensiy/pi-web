@@ -237,6 +237,28 @@ describe("ExternalPermissionBridgeRegistry", () => {
     expect(events.sessionEvents.filter(({ event }) => event.type === "dialog.closed")).toEqual([]);
   });
 
+  it("retains prior pending state when a contender record is encountered first", async () => {
+    const { registry, cwd, events, record, registryDir } = await fixture();
+    const initial = await registry.listForCwd(cwd);
+    const dialogId = initial[0]?.dialogs[0]?.dialogId;
+    if (dialogId === undefined) throw new Error("initial dialog missing");
+    await writeFile(join(registryDir, "000-contender.json"), JSON.stringify({
+      ...record,
+      processIncarnation: `test:${String(process.pid)}:20`,
+      endpointNonce: "first-contender",
+    }), { mode: 0o600 });
+
+    const owners = await registry.listForCwd(cwd);
+
+    expect(owners[0]?.owner).toMatchObject({
+      state: "conflict",
+      incarnation: record.processIncarnation,
+    });
+    expect(owners[0]?.dialogs.map((dialog) => dialog.dialogId)).toEqual([dialogId]);
+    expect(events.sessionEvents.filter(({ event }) => event.type === "dialog.closed")).toEqual([]);
+    expect(events.sessionEvents.filter(({ event }) => event.type === "dialog.opened")).toHaveLength(1);
+  });
+
   it("treats a stale Linux process incarnation as authoritative owner death", async () => {
     const { registry, cwd, events, record, recordPath } = await fixture();
     await registry.listForCwd(cwd);

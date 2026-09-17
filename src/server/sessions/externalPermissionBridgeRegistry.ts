@@ -211,7 +211,10 @@ export class ExternalPermissionBridgeRegistry {
       }
     }
     if (liveOrUnresolved.length > 1) {
-      return unavailableOwner(liveOrUnresolved[0] ?? fallback, "conflict", previous);
+      const previousRecord = previous === undefined
+        ? undefined
+        : liveOrUnresolved.find((candidate) => sameOwnerIncarnation(previous.identity, candidate));
+      return unavailableOwner(previousRecord ?? liveOrUnresolved[0] ?? fallback, "conflict", previous);
     }
     if (liveOrUnresolved.length === 0) {
       return unavailableOwner(authoritativelyDead[0] ?? fallback, "gone");
@@ -356,7 +359,7 @@ async function readRegistryRecords(directory: string, uid: number | undefined): 
     throw error;
   }
   const records: BridgeRegistryRecord[] = [];
-  for (const name of names.filter((candidate) => candidate.endsWith(".json"))) {
+  for (const name of names.filter((candidate) => candidate.endsWith(".json")).sort()) {
     const path = join(directory, name);
     try {
       const metadata = await lstat(path);
