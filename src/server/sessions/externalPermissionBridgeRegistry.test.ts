@@ -22,7 +22,7 @@ async function fixture() {
   await mkdir(cwd);
   await writeFile(transcriptPath, "");
   const socketPath = join(root, "bridge.sock");
-  const identity = {
+  let identity = {
     protocolVersion: 1,
     machineId: "local",
     source: "herdr",
@@ -75,6 +75,7 @@ async function fixture() {
     answers,
     setPending: (value: typeof pending) => { pending = value; },
     setSnapshotFailure: (value: boolean) => { snapshotFailure = value; },
+    setIdentity: (value: typeof identity) => { identity = value; },
   };
 }
 
@@ -189,6 +190,51 @@ describe("ExternalPermissionBridgeRegistry", () => {
     expect(closed).toHaveLength(1);
     expect(closed[0]?.sessionId).toBe("session-1");
     expect(closed[0]?.event).toMatchObject({ dialogId, reason: "peer-answered" });
+  });
+
+  it("excludes a stale crashed owner when a replacement live owner claims the same session", async () => {
+    const { registry, cwd, events, record, recordPath, registryDir, setIdentity } = await fixture();
+    const initial = await registry.listForCwd(cwd);
+    const dialogId = initial[0]?.dialogs[0]?.dialogId;
+    if (dialogId === undefined) throw new Error("initial dialog missing");
+    const replacement = {
+      ...record,
+      processIncarnation: `test:${String(process.pid)}:20`,
+      endpointNonce: "replacement",
+      updatedAt: "2026-09-17T00:01:00.000Z",
+    };
+    setIdentity(replacement);
+    await writeFile(recordPath, JSON.stringify({
+      ...record,
+      processIncarnation: `linux:${String(process.pid)}:0`,
+    }), { mode: 0o600 });
+    await writeFile(join(registryDir, "replacement.json"), JSON.stringify(replacement), { mode: 0o600 });
+
+    const owners = await registry.listForCwd(cwd);
+
+    expect(owners).toHaveLength(1);
+    expect(owners[0]?.owner).toMatchObject({ state: "ready", incarnation: replacement.processIncarnation });
+    expect(owners[0]?.dialogs.map((dialog) => dialog.dialogId)).toEqual([dialogId]);
+    expect(events.sessionEvents.filter(({ event }) => event.type === "dialog.closed")).toEqual([]);
+    expect(events.sessionEvents.filter(({ event }) => event.type === "dialog.opened")).toHaveLength(1);
+  });
+
+  it("retains prior pending state when multiple genuinely live or unresolved owners conflict", async () => {
+    const { registry, cwd, events, record, registryDir } = await fixture();
+    const initial = await registry.listForCwd(cwd);
+    const dialogId = initial[0]?.dialogs[0]?.dialogId;
+    if (dialogId === undefined) throw new Error("initial dialog missing");
+    await writeFile(join(registryDir, "second-live.json"), JSON.stringify({
+      ...record,
+      processIncarnation: `test:${String(process.pid)}:20`,
+      endpointNonce: "second-live",
+    }), { mode: 0o600 });
+
+    const owners = await registry.listForCwd(cwd);
+
+    expect(owners[0]?.owner.state).toBe("conflict");
+    expect(owners[0]?.dialogs.map((dialog) => dialog.dialogId)).toEqual([dialogId]);
+    expect(events.sessionEvents.filter(({ event }) => event.type === "dialog.closed")).toEqual([]);
   });
 
   it("treats a stale Linux process incarnation as authoritative owner death", async () => {

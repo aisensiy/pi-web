@@ -199,12 +199,26 @@ export class ExternalPermissionBridgeRegistry {
     const fallback = records[0];
     if (fallback === undefined) throw new Error("Permission owner group is empty");
     const ready = records.filter((record) => record.state === "ready");
-    if (ready.length > 1) return unavailableOwner(fallback, "conflict");
-    if (ready.length === 0) return unavailableOwner(fallback, "gone");
-    const record = ready[0];
-    if (record === undefined) throw new Error("Permission owner group has no ready record");
+    const liveOrUnresolved: BridgeRegistryRecord[] = [];
+    const authoritativelyDead: BridgeRegistryRecord[] = [];
+    for (const candidate of ready) {
+      try {
+        await validateProcessIncarnation(candidate);
+        liveOrUnresolved.push(candidate);
+      } catch (error: unknown) {
+        if (error instanceof ExternalOwnerGoneError) authoritativelyDead.push(candidate);
+        else liveOrUnresolved.push(candidate);
+      }
+    }
+    if (liveOrUnresolved.length > 1) {
+      return unavailableOwner(liveOrUnresolved[0] ?? fallback, "conflict", previous);
+    }
+    if (liveOrUnresolved.length === 0) {
+      return unavailableOwner(authoritativelyDead[0] ?? fallback, "gone");
+    }
+    const record = liveOrUnresolved[0];
+    if (record === undefined) throw new Error("Permission owner group has no live or unresolved ready record");
     try {
-      await validateProcessIncarnation(record);
       await validateSocket(record.socketPath, this.options.uid ?? process.getuid?.());
       const response = await requestBridge(record.socketPath, { type: "snapshot" });
       if (!isSnapshotResponse(response)) throw new Error("Invalid external permission snapshot response");
@@ -282,7 +296,7 @@ function unavailableOwner(
   state: "unavailable" | "gone" | "conflict",
   previous?: ExternalPermissionOwner,
 ): ExternalPermissionOwner {
-  const retainsPending = state === "unavailable"
+  const retainsPending = (state === "unavailable" || state === "conflict")
     && previous !== undefined
     && sameOwnerIncarnation(previous.identity, record);
   const owner: ExternalPermissionOwner = {
