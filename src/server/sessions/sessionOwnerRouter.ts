@@ -39,7 +39,7 @@ import type {
 import { INLINE_IMAGE_DATA_LIMIT, mediaIdForData } from "../browserMessageProjection.js";
 import type { SessionEventHub } from "../realtime/sessionEventHub.js";
 import { pageMessagesAtSafeBoundary } from "./messagePaging.js";
-import type { PiSessionManagerGateway } from "./piSessionService.js";
+import type { PiSessionManagerGateway, ResolvedSessionFile } from "./piSessionService.js";
 import type { NormalizedSessionCleanupRequest } from "./sessionCleanup.js";
 import type { SessionRouteRef, SessionRouteService } from "./sessionService.js";
 import { historyMessagesFromEntries } from "./transcriptMessages.js";
@@ -356,10 +356,37 @@ export class SessionOwnerRouter implements SessionRouteService {
   }
 
   private async resolveExternal(ref: SessionRouteRef): Promise<ExternalPermissionOwner | undefined> {
-    const owner = await this.external.resolve(ref);
-    if (owner === undefined) return undefined;
-    const resolved = await this.sessionManager.resolveSessionFile(ref.cwd, ref.id);
-    if (resolved === undefined || !await canonicalPathMatches(resolved.path, owner.identity.transcriptPath)) {
+    const exactOwner = await this.external.resolve(ref);
+    const resolved = await this.resolvePersistedSession(ref);
+    if (exactOwner !== undefined) return this.validateExternalOwner(exactOwner, resolved);
+    if (resolved === undefined) return undefined;
+    const owner = await this.external.resolve({ id: resolved.id, cwd: resolved.cwd });
+    return owner === undefined ? undefined : this.validateExternalOwner(owner, resolved);
+  }
+
+  private async resolvePersistedSession(ref: SessionRouteRef): Promise<ResolvedSessionFile | undefined> {
+    const sessions = await this.sessionManager.list(ref.cwd);
+    const exact = sessions.filter((session) => session.id === ref.id);
+    if (exact.length > 1) throw new Error("Session identity is ambiguous");
+    const exactMatch = exact[0];
+    if (exactMatch !== undefined) return exactMatch;
+    const prefixes = sessions.filter((session) => session.id.startsWith(ref.id));
+    if (prefixes.length > 1) throw new Error("Session ID prefix is ambiguous");
+    const prefixMatch = prefixes[0];
+    if (prefixMatch !== undefined) return prefixMatch;
+    return this.sessionManager.resolveSessionFile(ref.cwd, ref.id);
+  }
+
+  private async validateExternalOwner(
+    owner: ExternalPermissionOwner,
+    resolved: ResolvedSessionFile | undefined,
+  ): Promise<ExternalPermissionOwner> {
+    if (resolved === undefined) throw new Error("External Pi owner identity conflicts with the persisted session");
+    if (
+      resolved.id !== owner.identity.sessionId
+      || resolved.cwd !== owner.identity.cwd
+      || !await canonicalPathMatches(resolved.path, owner.identity.transcriptPath)
+    ) {
       throw new Error("External Pi owner identity conflicts with the persisted session");
     }
     return owner;

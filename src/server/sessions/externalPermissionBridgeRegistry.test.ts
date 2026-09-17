@@ -34,11 +34,14 @@ async function fixture() {
     endpointNonce: "nonce",
   };
   let pending = [presentation()];
+  let snapshotFailure = false;
   const answers: unknown[] = [];
   const server = createServer((socket) => {
     readRequest(socket, (request) => {
       if (isRecord(request) && request["type"] === "snapshot") {
-        socket.end(`${JSON.stringify({ ok: true, identity, revision: answers.length, pending })}\n`);
+        socket.end(`${JSON.stringify(snapshotFailure
+          ? { ok: false, error: "temporary snapshot failure" }
+          : { ok: true, identity, revision: answers.length, pending })}\n`);
         return;
       }
       if (isRecord(request) && request["type"] === "answer") {
@@ -61,7 +64,18 @@ async function fixture() {
   const events = new CapturingSessionEventHub();
   const registry = new ExternalPermissionBridgeRegistry({ directory: registryDir, events, pollIntervalMs: 60_000 });
   cleanup.push(() => registry.stop());
-  return { registry, events, cwd: identity.cwd, record, recordPath, registryDir, socketPath, answers, setPending: (value: typeof pending) => { pending = value; } };
+  return {
+    registry,
+    events,
+    cwd: identity.cwd,
+    record,
+    recordPath,
+    registryDir,
+    socketPath,
+    answers,
+    setPending: (value: typeof pending) => { pending = value; },
+    setSnapshotFailure: (value: boolean) => { snapshotFailure = value; },
+  };
 }
 
 function presentation() {
@@ -150,13 +164,45 @@ describe("ExternalPermissionBridgeRegistry", () => {
     expect(closed?.event).toMatchObject({ type: "dialog.closed", reason: "peer-answered" });
   });
 
-  it("rejects a stale Linux process incarnation before connecting", async () => {
-    const { registry, cwd, record, recordPath } = await fixture();
+  it("retains a prior pending card across transient snapshot failure and recovery", async () => {
+    const { registry, cwd, events, setPending, setSnapshotFailure } = await fixture();
+    const initial = await registry.listForCwd(cwd);
+    const dialogId = initial[0]?.dialogs[0]?.dialogId;
+    if (dialogId === undefined) throw new Error("initial dialog missing");
+    setSnapshotFailure(true);
+
+    const unavailable = await registry.listForCwd(cwd);
+
+    expect(unavailable[0]?.owner.state).toBe("unavailable");
+    expect(unavailable[0]?.dialogs.map((dialog) => dialog.dialogId)).toEqual([dialogId]);
+    expect(events.sessionEvents.filter(({ event }) => event.type === "dialog.closed")).toEqual([]);
+
+    setSnapshotFailure(false);
+    const recovered = await registry.listForCwd(cwd);
+    expect(recovered[0]?.owner.state).toBe("ready");
+    expect(recovered[0]?.dialogs.map((dialog) => dialog.dialogId)).toEqual([dialogId]);
+    expect(events.sessionEvents.filter(({ event }) => event.type === "dialog.opened")).toHaveLength(1);
+
+    setPending([]);
+    await registry.listForCwd(cwd);
+    const closed = events.sessionEvents.filter(({ event }) => event.type === "dialog.closed");
+    expect(closed).toHaveLength(1);
+    expect(closed[0]?.sessionId).toBe("session-1");
+    expect(closed[0]?.event).toMatchObject({ dialogId, reason: "peer-answered" });
+  });
+
+  it("treats a stale Linux process incarnation as authoritative owner death", async () => {
+    const { registry, cwd, events, record, recordPath } = await fixture();
+    await registry.listForCwd(cwd);
     await writeFile(recordPath, JSON.stringify({ ...record, processIncarnation: `linux:${String(process.pid)}:0` }), { mode: 0o600 });
 
     const owners = await registry.listForCwd(cwd);
 
-    expect(owners[0]?.owner.state).toBe("unavailable");
+    expect(owners[0]?.owner.state).toBe("gone");
+    expect(owners[0]?.dialogs).toEqual([]);
+    expect(events.sessionEvents.find(({ event }) => event.type === "dialog.closed")?.event).toMatchObject({
+      reason: "session-ended",
+    });
   });
 
   it("rejects non-private registry records", async () => {

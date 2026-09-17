@@ -21,13 +21,16 @@ function pendingDialog(): PendingExtensionDialog {
   };
 }
 
-function externalOwner(state: ExternalPermissionOwner["owner"]["state"] = "ready"): ExternalPermissionOwner {
+function externalOwner(
+  state: ExternalPermissionOwner["owner"]["state"] = "ready",
+  sessionId = "session-1",
+): ExternalPermissionOwner {
   return {
     identity: {
       protocolVersion: 1,
       machineId: "local",
       source: "herdr",
-      sessionId: "session-1",
+      sessionId,
       cwd: "/workspace",
       transcriptPath: "/sessions/session-1.jsonl",
       pid: 42,
@@ -41,12 +44,20 @@ function externalOwner(state: ExternalPermissionOwner["owner"]["state"] = "ready
   };
 }
 
-function setup(owner: ExternalPermissionOwner | null = externalOwner(), ownerTranscriptPath = `${process.cwd()}/package.json`) {
+function setup(
+  owner: ExternalPermissionOwner | null = externalOwner(),
+  ownerTranscriptPath = `${process.cwd()}/package.json`,
+  sessionRecords?: { id: string; path: string }[],
+) {
   const transcriptPath = `${process.cwd()}/package.json`;
   const resolvedOwner = owner === null ? null : { ...owner, identity: { ...owner.identity, transcriptPath: ownerTranscriptPath } };
   const fake = fakeRuntime("session-1");
   const createAgentRuntime = vi.fn<RuntimeCreator>(() => Promise.resolve(fake.runtime));
-  const gateway = sessionGateway([{ ...sessionRecord("session-1"), path: transcriptPath }]);
+  const gateway = sessionGateway(
+    (sessionRecords ?? [{ id: "session-1", path: transcriptPath }]).map(
+      (record) => ({ ...sessionRecord(record.id), path: record.path }),
+    ),
+  );
   gateway.readBranch = () => Promise.resolve([
     { type: "message", message: { role: "user", content: [{ type: "text", text: "hello" }] } },
   ]);
@@ -63,7 +74,9 @@ function setup(owner: ExternalPermissionOwner | null = externalOwner(), ownerTra
   const external: ExternalPermissionOwners = {
     hasAnyOwner: () => Promise.resolve(resolvedOwner !== null),
     listForCwd: () => Promise.resolve(resolvedOwner === null ? [] : [resolvedOwner]),
-    resolve: () => Promise.resolve(resolvedOwner ?? undefined),
+    resolve: (ref) => Promise.resolve(
+      resolvedOwner?.identity.sessionId === ref.id ? resolvedOwner : undefined,
+    ),
     status: (resolved) => ({
       sessionId: resolved.identity.sessionId,
       isStreaming: false,
@@ -95,6 +108,58 @@ describe("SessionOwnerRouter", () => {
     expect(status.pendingDialogs).toEqual([pendingDialog()]);
     expect(stream).toEqual({ seq: 9, partial: null });
     expect(media).toBeUndefined();
+    expect(createAgentRuntime).not.toHaveBeenCalled();
+    await local.dispose();
+  });
+
+  it("resolves a persisted prefix to the full external owner before every route", async () => {
+    const { router, local, answer, createAgentRuntime } = setup();
+    const prefixRef = { id: "session", cwd: "/workspace" };
+
+    await expect(router.messages(prefixRef)).resolves.toMatchObject({
+      messages: [{ role: "user" }],
+    });
+    await expect(router.status(prefixRef)).resolves.toMatchObject({
+      sessionId: "session-1",
+      pendingDialogs: [expect.objectContaining({ dialogId: "permission-dialog" })],
+    });
+    await expect(router.prompt(prefixRef, "continue")).rejects.toThrow(
+      "owned by the original Herdr Pi",
+    );
+    await expect(
+      router.answerDialog(prefixRef, "permission-dialog", "allow-token"),
+    ).resolves.toMatchObject({ result: "closed" });
+
+    expect(answer).toHaveBeenCalledOnce();
+    expect(createAgentRuntime).not.toHaveBeenCalled();
+    await local.dispose();
+  });
+
+  it("fails closed for an ambiguous persisted prefix before owner or local routing", async () => {
+    const packagePath = `${process.cwd()}/package.json`;
+    const readmePath = `${process.cwd()}/README.md`;
+    const owner = externalOwner("ready", "session-alpha");
+    const { router, local, answer, createAgentRuntime } = setup(
+      owner,
+      packagePath,
+      [
+        { id: "session-alpha", path: packagePath },
+        { id: "session-alpine", path: readmePath },
+      ],
+    );
+    const ambiguousRef = { id: "session-al", cwd: "/workspace" };
+
+    await expect(router.messages(ambiguousRef)).rejects.toThrow(
+      "Session ID prefix is ambiguous",
+    );
+    await expect(router.prompt(ambiguousRef, "continue")).rejects.toThrow(
+      "Session ID prefix is ambiguous",
+    );
+    await expect(
+      router.answerDialog(ambiguousRef, "permission-dialog", "allow-token"),
+    ).rejects.toThrow("Session ID prefix is ambiguous");
+
+    expect(answer).not.toHaveBeenCalled();
     expect(createAgentRuntime).not.toHaveBeenCalled();
     await local.dispose();
   });

@@ -60,6 +60,8 @@ type BridgeAnswerResult =
   | { outcome: "stale" }
   | { outcome: "invalid"; reason: string };
 
+class ExternalOwnerGoneError extends Error {}
+
 export interface ExternalPermissionOwner {
   identity: BridgeIdentity;
   owner: ExternalSessionOwner;
@@ -180,14 +182,20 @@ export class ExternalPermissionBridgeRegistry {
     const grouped = groupRecords(records);
     const next = new Map<string, ExternalPermissionOwner>();
     for (const [key, candidates] of grouped) {
-      next.set(key, await this.resolveCandidates(candidates));
+      next.set(key, await this.resolveCandidates(candidates, this.owners.get(key)));
+    }
+    for (const [key, previous] of this.owners) {
+      if (!next.has(key)) next.set(key, retainUnavailableOwner(previous));
     }
     this.publishChanges(this.owners, next);
     this.owners.clear();
     for (const [key, owner] of next) this.owners.set(key, owner);
   }
 
-  private async resolveCandidates(records: readonly BridgeRegistryRecord[]): Promise<ExternalPermissionOwner> {
+  private async resolveCandidates(
+    records: readonly BridgeRegistryRecord[],
+    previous: ExternalPermissionOwner | undefined,
+  ): Promise<ExternalPermissionOwner> {
     const fallback = records[0];
     if (fallback === undefined) throw new Error("Permission owner group is empty");
     const ready = records.filter((record) => record.state === "ready");
@@ -213,8 +221,9 @@ export class ExternalPermissionBridgeRegistry {
       };
       presentationByOwner.set(owner, presentations);
       return owner;
-    } catch {
-      return unavailableOwner(record, "unavailable");
+    } catch (error: unknown) {
+      if (error instanceof ExternalOwnerGoneError) return unavailableOwner(record, "gone");
+      return unavailableOwner(record, "unavailable", previous);
     }
   }
 
@@ -268,14 +277,46 @@ function ownerPresentations(owner: ExternalPermissionOwner): readonly Permission
   return presentationByOwner.get(owner) ?? [];
 }
 
-function unavailableOwner(record: BridgeRegistryRecord, state: "unavailable" | "gone" | "conflict"): ExternalPermissionOwner {
-  return {
+function unavailableOwner(
+  record: BridgeRegistryRecord,
+  state: "unavailable" | "gone" | "conflict",
+  previous?: ExternalPermissionOwner,
+): ExternalPermissionOwner {
+  const retainsPending = state === "unavailable"
+    && previous !== undefined
+    && sameOwnerIncarnation(previous.identity, record);
+  const owner: ExternalPermissionOwner = {
     identity: record,
     owner: { kind: "external-pi", source: "herdr", state, incarnation: record.processIncarnation },
     socketPath: undefined,
-    dialogs: [],
-    revision: 0,
+    dialogs: retainsPending ? previous.dialogs : [],
+    revision: retainsPending ? previous.revision : 0,
   };
+  if (retainsPending) {
+    presentationByOwner.set(owner, ownerPresentations(previous));
+  }
+  return owner;
+}
+
+function retainUnavailableOwner(previous: ExternalPermissionOwner): ExternalPermissionOwner {
+  const owner: ExternalPermissionOwner = {
+    ...previous,
+    owner: { ...previous.owner, state: "unavailable" },
+    socketPath: undefined,
+  };
+  presentationByOwner.set(owner, ownerPresentations(previous));
+  return owner;
+}
+
+function sameOwnerIncarnation(left: BridgeIdentity, right: BridgeIdentity): boolean {
+  return left.machineId === right.machineId
+    && left.source === right.source
+    && left.sessionId === right.sessionId
+    && left.cwd === right.cwd
+    && left.transcriptPath === right.transcriptPath
+    && left.pid === right.pid
+    && left.processIncarnation === right.processIncarnation
+    && left.endpointNonce === right.endpointNonce;
 }
 
 function groupRecords(records: readonly BridgeRegistryRecord[]): Map<string, BridgeRegistryRecord[]> {
@@ -388,11 +429,19 @@ function assertIdentityMatches(record: BridgeRegistryRecord, identity: BridgeIde
 
 async function validateProcessIncarnation(record: BridgeRegistryRecord): Promise<void> {
   if (!record.processIncarnation.startsWith("linux:")) return;
-  const statText = await readFile(`/proc/${String(record.pid)}/stat`, "utf8");
+  let statText: string;
+  try {
+    statText = await readFile(`/proc/${String(record.pid)}/stat`, "utf8");
+  } catch (error: unknown) {
+    if (isNodeError(error, "ENOENT") || isNodeError(error, "ESRCH")) {
+      throw new ExternalOwnerGoneError("Permission bridge process exited");
+    }
+    throw error;
+  }
   const fields = statText.slice(statText.lastIndexOf(")") + 2).trim().split(/\s+/u);
   const startTime = fields[19];
   if (startTime === undefined || record.processIncarnation !== `linux:${String(record.pid)}:${startTime}`) {
-    throw new Error("Permission bridge process incarnation is stale");
+    throw new ExternalOwnerGoneError("Permission bridge process incarnation is stale");
   }
 }
 

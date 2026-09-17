@@ -127,7 +127,9 @@ export class SessionList extends LitElement implements KeyboardNavigableSection 
   override render() {
     const currentRows = sessionRowsForCurrentTree(this.sessions);
     const currentRowIds = new Set(currentRows.map((row) => row.session.id));
-    const currentSelectableSessions = currentRows.map((row) => row.session).filter((session) => sessionSelectionScope(session) === "current");
+    const currentSelectableSessions = currentRows
+      .map((row) => row.session)
+      .filter((session) => session.owner === undefined && sessionSelectionScope(session) === "current");
     const archivedRows = sessionRows(this.sessions.filter((session) => session.archived === true && !currentRowIds.has(session.id)));
     const descendantCounts = unarchivedDescendantCounts(this.sessions);
     const unreadCount = unreadSessionCount(currentSelectableSessions, this.unreadSessionIds);
@@ -142,7 +144,7 @@ export class SessionList extends LitElement implements KeyboardNavigableSection 
             ${archivedRows.length > 0 ? html`
               ${this.renderArchivedHeading(archivedRows.map((row) => row.session))}
               ${this.archivedExpanded ? html`
-                ${this.renderArchivedSelectionToolbar(archivedRows.map((row) => row.session))}
+                ${this.renderArchivedSelectionToolbar(archivedRows.map((row) => row.session).filter((session) => session.owner === undefined))}
                 ${archivedRows.map((row) => this.renderSession(row, descendantCounts.get(row.session.id) ?? 0, "archived"))}
               ` : null}
             ` : null}
@@ -213,10 +215,11 @@ export class SessionList extends LitElement implements KeyboardNavigableSection 
 
   private renderArchivedHeading(archivedSessions: SessionInfo[]) {
     const active = this.selectionScopes.has("archived");
+    const selectableSessions = archivedSessions.filter((session) => session.owner === undefined);
     return html`
       <h2 class="subheading">
         <button class="section-toggle" aria-expanded=${String(this.archivedExpanded)} @click=${() => { this.toggleArchived(); }}><span>${this.archivedExpanded ? "▾" : "▸"} Archived</span></button>
-        ${this.archivedExpanded ? html`<button class="bulk-select-entry ${active ? "selected" : ""}" title=${active ? "Close archived session selection" : "Select archived sessions"} aria-label=${active ? "Close archived session selection" : "Select archived sessions"} aria-expanded=${String(active)} aria-pressed=${String(active)} @click=${() => { this.toggleSelection("archived", archivedSessions); }}>☑</button>` : null}
+        ${this.archivedExpanded && selectableSessions.length > 0 ? html`<button class="bulk-select-entry ${active ? "selected" : ""}" title=${active ? "Close archived session selection" : "Select archived sessions"} aria-label=${active ? "Close archived session selection" : "Select archived sessions"} aria-expanded=${String(active)} aria-pressed=${String(active)} @click=${() => { this.toggleSelection("archived", selectableSessions); }}>☑</button>` : null}
         <small class="section-count">${archivedSessions.length}</small>
       </h2>
     `;
@@ -362,7 +365,8 @@ export class SessionList extends LitElement implements KeyboardNavigableSection 
   }
 
   private activateSessionRow(session: SessionInfo, scope: SessionSelectionScope): void {
-    if (this.selectionScopes.has(scope) && sessionSelectionScope(session) === scope) {
+    if (this.selectionScopes.has(scope)) {
+      if (session.owner !== undefined || sessionSelectionScope(session) !== scope) return;
       this.toggleSelected(session.id);
       return;
     }
@@ -409,7 +413,8 @@ export class SessionList extends LitElement implements KeyboardNavigableSection 
 
   private startSelection(scope: SessionSelectionScope, visibleSessions: SessionInfo[]): void {
     this.selectionScopes = new Set([...this.selectionScopes, scope]);
-    const onlyVisibleSession = visibleSessions.length === 1 ? visibleSessions[0] : undefined;
+    const selectableSessions = visibleSessions.filter((session) => session.owner === undefined);
+    const onlyVisibleSession = selectableSessions.length === 1 ? selectableSessions[0] : undefined;
     if (onlyVisibleSession !== undefined) this.selectedSessionIds = new Set([...this.selectedSessionIds, onlyVisibleSession.id]);
   }
 
@@ -424,6 +429,7 @@ export class SessionList extends LitElement implements KeyboardNavigableSection 
   }
 
   private toggleSelected(sessionId: string): void {
+    if (this.sessions.find((session) => session.id === sessionId)?.owner !== undefined) return;
     const next = new Set(this.selectedSessionIds);
     if (next.has(sessionId)) next.delete(sessionId);
     else next.add(sessionId);
@@ -431,15 +437,16 @@ export class SessionList extends LitElement implements KeyboardNavigableSection 
   }
 
   private selectVisibleSessions(sessions: SessionInfo[]): void {
-    this.selectedSessionIds = new Set([...this.selectedSessionIds, ...sessions.map((session) => session.id)]);
+    const selectableIds = sessions.filter((session) => session.owner === undefined).map((session) => session.id);
+    this.selectedSessionIds = new Set([...this.selectedSessionIds, ...selectableIds]);
   }
 
   private selectedSessions(scope: SessionSelectionScope): SessionInfo[] {
-    return this.sessions.filter((session) => this.selectedSessionIds.has(session.id) && sessionSelectionScope(session) === scope);
+    return this.sessions.filter((session) => session.owner === undefined && this.selectedSessionIds.has(session.id) && sessionSelectionScope(session) === scope);
   }
 
   private pruneSelectedSessionIds(): void {
-    const existing = new Set(this.sessions.map((session) => session.id));
+    const existing = new Set(this.sessions.filter((session) => session.owner === undefined).map((session) => session.id));
     const next = new Set([...this.selectedSessionIds].filter((sessionId) => existing.has(sessionId)));
     if (next.size !== this.selectedSessionIds.size) this.selectedSessionIds = next;
     if (this.selectionScopes.has("archived") && !this.sessions.some((session) => session.archived === true)) this.closeSelection("archived");

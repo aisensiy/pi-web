@@ -113,6 +113,34 @@ describe("externally owned session rows", () => {
     expect(rendered).toContain("Blocked");
     expect(rendered).not.toContain("Session actions");
   });
+
+  it("excludes external rows when selecting visible mixed sessions", () => {
+    const localA = session("local-a");
+    const external = session("external", {
+      owner: { kind: "external-pi", source: "herdr", state: "ready", incarnation: "linux:42:10" },
+    });
+    const localB = session("local-b");
+    const list = sessionList([localA, external, localB], new Set());
+
+    selectVisibleSessions(list, [localA, external, localB]);
+
+    expect(componentState(list, "selectedSessionIds")).toEqual(new Set(["local-a", "local-b"]));
+  });
+
+  it("ignores external row activation while bulk selection is active", () => {
+    const external = session("external", {
+      owner: { kind: "external-pi", source: "herdr", state: "ready", incarnation: "linux:42:10" },
+    });
+    const list = sessionList([session("local"), external], new Set());
+    const onSelect = vi.fn<(session: SessionInfo) => void>();
+    list.onSelect = onSelect;
+    setComponentState(list, "selectionScopes", new Set(["current"]));
+
+    activateSessionRow(list, external, "current");
+
+    expect(componentState(list, "selectedSessionIds")).toEqual(new Set());
+    expect(onSelect).not.toHaveBeenCalled();
+  });
 });
 
 describe("mark-as-read actions", () => {
@@ -235,6 +263,18 @@ function componentState(list: SessionList, property: string): unknown {
 
 function setComponentState(list: SessionList, property: string, value: unknown): void {
   if (!Reflect.set(list, property, value)) throw new Error(`Could not set session list property ${property}`);
+}
+
+function selectVisibleSessions(list: SessionList, sessions: SessionInfo[]): void {
+  const method: unknown = Reflect.get(list, "selectVisibleSessions");
+  if (typeof method !== "function") throw new Error("SessionList.selectVisibleSessions is unavailable");
+  Reflect.apply(method, list, [sessions]);
+}
+
+function activateSessionRow(list: SessionList, session: SessionInfo, scope: "current" | "archived"): void {
+  const method: unknown = Reflect.get(list, "activateSessionRow");
+  if (typeof method !== "function") throw new Error("SessionList.activateSessionRow is unavailable");
+  Reflect.apply(method, list, [session, scope]);
 }
 
 // Locates the bulk "Mark read" button inside the selection toolbar template,

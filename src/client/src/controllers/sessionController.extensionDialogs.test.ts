@@ -209,6 +209,46 @@ describe("SessionController extension dialog answers", () => {
     expect(state.status).toEqual(closedStatus);
   });
 
+  it("replaces a peer-answered close when the accepted HTTP answer arrives later", async () => {
+    const pending = dialog("dialog-1", "select");
+    let resolveAccepted: ((value: ExtensionDialogCloseResponse) => void) | undefined;
+    const accepted = new Promise<ExtensionDialogCloseResponse>((resolve) => { resolveAccepted = resolve; });
+    const socket = new EmitSocket();
+    let state = selectedState({ selectedSession: undefined });
+    const api: typeof defaultApi = {
+      ...selectableApi(statusWithDialogs(oldSession.id, [pending])),
+      answerDialog: () => accepted,
+    };
+    const controller = new SessionController(
+      () => state,
+      (patch) => { state = { ...state, ...patch }; },
+      () => undefined,
+      undefined,
+      { api, socket },
+    );
+    await controller.selectSession(oldSession, { updateUrl: false });
+
+    const answerPromise = controller.answerDialog("dialog-1", "SQLite");
+    socket.emit({ type: "dialog.closed", dialogId: "dialog-1", reason: "peer-answered" });
+    expect(state.closedDialogs).toEqual([{ dialog: pending, reason: "peer-answered" }]);
+    if (resolveAccepted === undefined) throw new Error("answer request did not start");
+    resolveAccepted({
+      result: "closed",
+      outcome: {
+        dialogId: "dialog-1",
+        reason: "answered",
+        answer: "SQLite",
+        askedAt: pending.askedAt,
+        closedAt: "2026-07-20T00:01:00.000Z",
+      },
+      sessionStatus: status(oldSession.id),
+    });
+    await answerPromise;
+
+    expect(state.closedDialogs).toEqual([{ dialog: pending, reason: "answered", answer: "SQLite" }]);
+    expect(state.pendingDialogs).toEqual([]);
+  });
+
   it("cancels a dialog through its own route", async () => {
     const cancelCalls: string[] = [];
     let state = selectedState({ pendingDialogs: [dialog("dialog-1")] });

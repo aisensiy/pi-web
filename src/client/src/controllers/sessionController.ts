@@ -1209,8 +1209,16 @@ export class SessionController {
       // then finds the dialog already closed here and stays a no-op.
       const outcome: ExtensionDialogOutcome | undefined = response.outcome;
       if (outcome !== undefined) {
-        const dialog = this.getState().pendingDialogs.find((pending) => pending.dialogId === outcome.dialogId);
-        if (dialog !== undefined) this.recordClosedDialog({ dialog, reason: outcome.reason, ...(outcome.answer === undefined ? {} : { answer: outcome.answer }) });
+        if (outcome.dialogId !== dialogId) throw new Error("Dialog answer response identity mismatch");
+        const current = this.getState();
+        const dialog = current.pendingDialogs.find((pending) => pending.dialogId === outcome.dialogId)
+          ?? current.closedDialogs.find((closed) => closed.dialog.dialogId === outcome.dialogId)?.dialog;
+        if (dialog !== undefined) {
+          this.recordClosedDialog(
+            { dialog, reason: outcome.reason, ...(outcome.answer === undefined ? {} : { answer: outcome.answer }) },
+            true,
+          );
+        }
       }
       // Both outcomes carry the recomputed status, so no follow-up status
       // request is needed to learn what the session's open dialogs are now.
@@ -1884,9 +1892,23 @@ export class SessionController {
     this.recordClosedDialog({ dialog, reason, ...(answer === undefined ? {} : { answer }) });
   }
 
-  private recordClosedDialog(closed: ClosedExtensionDialog): void {
+  private recordClosedDialog(closed: ClosedExtensionDialog, replacePeerAnswered = false): void {
     const state = this.getState();
-    if (state.closedDialogs.some((entry) => entry.dialog.dialogId === closed.dialog.dialogId)) return;
+    const existingIndex = state.closedDialogs.findIndex(
+      (entry) => entry.dialog.dialogId === closed.dialog.dialogId,
+    );
+    if (existingIndex >= 0) {
+      const existing = state.closedDialogs[existingIndex];
+      if (
+        !replacePeerAnswered
+        || existing?.reason !== "peer-answered"
+        || closed.reason !== "answered"
+      ) return;
+      this.setState({
+        closedDialogs: state.closedDialogs.map((entry, index) => index === existingIndex ? closed : entry),
+      });
+      return;
+    }
     this.setState({
       pendingDialogs: state.pendingDialogs.filter((pending) => pending.dialogId !== closed.dialog.dialogId),
       closedDialogs: [...state.closedDialogs, closed],
