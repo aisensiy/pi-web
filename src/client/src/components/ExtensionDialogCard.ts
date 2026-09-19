@@ -369,15 +369,21 @@ export class ExtensionDialogCard extends LitElement {
       padding: 12px 16px;
       line-height: 1.4;
       overflow-wrap: anywhere;
+      /* Bound the request text so header and actions stay on screen; long
+         permission commands scroll inside their own region instead of
+         pushing the action buttons out of the viewport. */
+      max-height: min(34vh, 300px);
+      overflow-y: auto;
+      overscroll-behavior-y: contain;
     }
     .dialog-action-stack {
-      max-height: min(50vh, 320px);
+      max-height: min(45vh, 320px);
       overflow-y: auto;
       overscroll-behavior-y: contain;
       border-top: 1px solid var(--pi-border-muted);
       border-radius: 0 0 9px 9px;
     }
-    .dialog-options { display: grid; gap: 7px; padding: 12px 16px; }
+    .dialog-options { display: grid; gap: 6px; padding: 10px 16px; }
     .option-button {
       display: block;
       width: 100%;
