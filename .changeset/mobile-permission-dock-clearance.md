@@ -2,4 +2,4 @@
 "@jmfederico/pi-web": patch
 ---
 
-Keep permission dialog actions clear of the floating activity dock on small screens where the dialog is taller than the transcript.
+Keep permission dialogs bounded to the visible transcript area: the request text scrolls in place while the title and action buttons stay on screen and clear of the activity dock, even for long commands on small screens.

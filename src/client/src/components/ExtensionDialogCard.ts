@@ -155,7 +155,7 @@ export class ExtensionDialogCard extends LitElement {
   private renderConfirmBody(dialog: PendingExtensionDialog): TemplateResult {
     return html`
       ${dialog.message === undefined ? null : html`<p class="dialog-message">${dialog.message}</p>`}
-      <footer class="dialog-footer sticky-actions">
+      <footer class="dialog-footer">
         <button class="secondary-action" type="button" ?disabled=${this.closing} @click=${() => { this.cancelDialog(dialog); }}>Cancel</button>
         <button class="secondary-action" type="button" ?disabled=${this.closing} @click=${() => { this.answerDialog(dialog, false); }}>No</button>
         <button class="primary-action" type="button" ?disabled=${this.closing} @click=${() => { this.answerDialog(dialog, true); }}>Yes</button>
@@ -167,7 +167,7 @@ export class ExtensionDialogCard extends LitElement {
     if (this.reasonChoiceIndex !== undefined) return this.renderSelectReasonBody(dialog, this.reasonChoiceIndex);
     return html`
       ${dialog.message === undefined ? null : html`<p class="dialog-message">${dialog.message}</p>`}
-      <div class="dialog-action-stack sticky-actions">
+      <div class="dialog-action-stack">
         <div class="dialog-options" role="group" aria-label="Choices">
           ${(dialog.options ?? []).map((option, index) => html`
             <button class="option-button" type="button" ?disabled=${this.closing} @click=${() => { this.selectOption(dialog, index); }}>${option}</button>
@@ -196,7 +196,7 @@ export class ExtensionDialogCard extends LitElement {
           ?disabled=${this.closing}
           @input=${(event: Event) => { this.changeInput(event); }}
         />
-        <footer class="dialog-footer sticky-actions">
+        <footer class="dialog-footer">
           <button class="secondary-action" type="button" ?disabled=${this.closing} @click=${() => { this.reasonChoiceIndex = undefined; this.inputValue = ""; }}>Back</button>
           <button class="primary-action" type="submit" ?disabled=${this.closing || this.inputValue.trim() === ""}>${this.closing ? "Sending…" : "Send"}</button>
         </footer>
@@ -218,7 +218,7 @@ export class ExtensionDialogCard extends LitElement {
           ?disabled=${this.closing}
           @input=${(event: Event) => { this.changeInput(event); }}
         />
-        <footer class="dialog-footer sticky-actions">
+        <footer class="dialog-footer">
           <button class="secondary-action" type="button" ?disabled=${this.closing} @click=${() => { this.cancelDialog(dialog); }}>Cancel</button>
           <button class="primary-action" type="submit" ?disabled=${this.closing}>${this.closing ? "Sending…" : "Send"}</button>
         </footer>
@@ -337,6 +337,16 @@ export class ExtensionDialogCard extends LitElement {
       border-radius: 10px;
       background: var(--pi-surface);
     }
+    /* Bound the open card to the transcript area (the .chat-wrap size
+       container) minus the floating activity dock zone and the card margin,
+       so title, request text, and actions share one screen: the request text
+       flexes and scrolls in place while the controls keep their size. */
+    .open-card {
+      display: flex;
+      flex-direction: column;
+      max-height: calc(100cqh - 71px);
+    }
+    .open-card > .dialog-input-form { flex: 0 0 auto; }
     .card-header {
       position: sticky;
       top: var(--pi-chat-sticky-top, 0px);
@@ -365,18 +375,18 @@ export class ExtensionDialogCard extends LitElement {
     .header-status.answered { color: var(--pi-success); }
     .header-status.timeout, .header-status.aborted, .header-status.session-ended { color: var(--pi-warning); }
     .dialog-message {
+      flex: 0 1 auto;
+      min-height: 72px;
       margin: 0;
       padding: 12px 16px;
       line-height: 1.4;
       overflow-wrap: anywhere;
-      /* Bound the request text so header and actions stay on screen; long
-         permission commands scroll inside their own region instead of
-         pushing the action buttons out of the viewport. */
       max-height: min(30vh, 280px);
       overflow-y: auto;
       overscroll-behavior-y: contain;
     }
     .dialog-action-stack {
+      flex: 0 0 auto;
       max-height: min(45vh, 320px);
       overflow-y: auto;
       overscroll-behavior-y: contain;
@@ -403,15 +413,6 @@ export class ExtensionDialogCard extends LitElement {
       color: var(--pi-text);
       padding: 8px;
       font: var(--pi-control-font-size, 16px)/1.4 var(--pi-control-font-family, system-ui, sans-serif);
-    }
-    .sticky-actions {
-      position: sticky;
-      /* Ride above the transcript's floating activity dock when one is
-         rendered; the variable is 0px otherwise. */
-      bottom: var(--pi-chat-sticky-bottom, 0px);
-      z-index: 7;
-      background: var(--pi-surface);
-      box-shadow: 0 -8px 18px var(--pi-shadow-soft);
     }
     .dialog-footer {
       display: flex;
