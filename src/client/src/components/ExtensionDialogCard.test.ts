@@ -97,6 +97,8 @@ describe("extension-dialog-card select dialog", () => {
     const root = renderRoot(card);
 
     expect(root.querySelector(".dialog-message")?.textContent).toBe("write /tmp/effect");
+    const stickyActions = requiredElement(root.querySelector(".dialog-action-stack.sticky-actions"), "sticky permission actions");
+    expect([...stickyActions.querySelectorAll("button")].map((button) => button.textContent.trim())).toEqual(["Yes", "No"]);
     expect(buttonsWithText(root, "Cancel")).toHaveLength(0);
     buttonWithText(root, "Yes").click();
     await Promise.resolve();
