@@ -372,7 +372,7 @@ export class ExtensionDialogCard extends LitElement {
       /* Bound the request text so header and actions stay on screen; long
          permission commands scroll inside their own region instead of
          pushing the action buttons out of the viewport. */
-      max-height: min(34vh, 300px);
+      max-height: min(30vh, 280px);
       overflow-y: auto;
       overscroll-behavior-y: contain;
     }
@@ -406,6 +406,8 @@ export class ExtensionDialogCard extends LitElement {
     }
     .sticky-actions {
       position: sticky;
+      /* Ride above the transcript's floating activity dock when one is
+         rendered; the variable is 0px otherwise. */
       bottom: var(--pi-chat-sticky-bottom, 0px);
       z-index: 7;
       background: var(--pi-surface);
