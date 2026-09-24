@@ -49,10 +49,18 @@ interface ActiveBridge {
   registryPath: string;
   socketPath: string;
   server: Server;
+  connections: Set<Socket>;
   unsubscribe: () => void;
   service: PermissionPresentationService;
   revision: number;
 }
+
+/**
+ * Pi quit waits for `session_shutdown` handlers, so bridge teardown must never
+ * wait on a remote peer: `server.close()` alone only fires once every peer
+ * closes its half, and the web poller keeps a connection open per poll.
+ */
+const SERVER_CLOSE_TIMEOUT_MS = 1_000;
 
 /**
  * Publish the current Pi session's permission-presentation service over a
@@ -110,7 +118,12 @@ export default function piWebPermissionBridge(pi: ExtensionAPI): void {
     if (bridge === undefined) return;
     bridge.unsubscribe();
     await writeRegistry(bridge.registryPath, { ...bridge.identity, socketPath: bridge.socketPath, state, updatedAt: new Date().toISOString() });
-    await new Promise<void>((resolve) => { bridge.server.close(() => { resolve(); }); });
+    for (const socket of bridge.connections) socket.destroy();
+    bridge.connections.clear();
+    await new Promise<void>((resolve) => {
+      const timer = setTimeout(resolve, SERVER_CLOSE_TIMEOUT_MS);
+      bridge.server.close(() => { clearTimeout(timer); resolve(); });
+    });
     await rm(bridge.socketPath, { force: true });
   }
 }
@@ -149,7 +162,10 @@ async function openBridge(
     endpointNonce,
   });
   let revision = 0;
+  const connections = new Set<Socket>();
   const server = createServer((socket) => {
+    connections.add(socket);
+    socket.once("close", () => { connections.delete(socket); });
     handleSocket(socket, identity, service, () => revision);
   });
   await rm(socketPath, { force: true });
@@ -164,7 +180,7 @@ async function openBridge(
   const record: BridgeRegistryRecord = { ...identity, socketPath, state: "ready", updatedAt: new Date().toISOString() };
   await writeRegistry(registryPath, record);
   const unsubscribe = service.subscribe(() => { revision += 1; });
-  return { identity, registryPath, socketPath, server, unsubscribe, service, revision };
+  return { identity, registryPath, socketPath, server, connections, unsubscribe, service, revision };
 }
 
 function handleSocket(

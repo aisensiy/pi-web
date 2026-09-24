@@ -484,7 +484,10 @@ function requestBridge(path: string, request: unknown): Promise<Record<string, u
       response += chunk;
       if (response.length > MAX_RESPONSE_BYTES) socket.destroy(new Error("Permission bridge response too large"));
     });
-    socket.on("error", reject);
+    socket.on("error", (error) => {
+      socket.destroy();
+      reject(error);
+    });
     socket.on("end", () => {
       try {
         const parsed: unknown = JSON.parse(response.trim());
@@ -495,6 +498,11 @@ function requestBridge(path: string, request: unknown): Promise<Record<string, u
         resolve(parsed);
       } catch (error: unknown) {
         reject(error instanceof Error ? error : new Error(String(error)));
+      } finally {
+        // The bridge counts a connection as open until the client closes its
+        // half; leaving that to the garbage collector can stall the bridge's
+        // server.close() and hang Pi's quit path. Destroy immediately instead.
+        socket.destroy();
       }
     });
   });

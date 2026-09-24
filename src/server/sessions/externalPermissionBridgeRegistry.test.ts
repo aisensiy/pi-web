@@ -2,7 +2,7 @@ import { createServer, type Server, type Socket } from "node:net";
 import { chmod, mkdtemp, mkdir, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { CapturingSessionEventHub } from "./piSessionService.testSupport.js";
 import { ExternalPermissionBridgeRegistry } from "./externalPermissionBridgeRegistry.js";
 
@@ -36,7 +36,11 @@ async function fixture() {
   let pending = [presentation()];
   let snapshotFailure = false;
   const answers: unknown[] = [];
+  let acceptedConnections = 0;
+  let closedConnections = 0;
   const server = createServer((socket) => {
+    acceptedConnections += 1;
+    socket.once("close", () => { closedConnections += 1; });
     readRequest(socket, (request) => {
       if (isRecord(request) && request["type"] === "snapshot") {
         socket.end(`${JSON.stringify(snapshotFailure
@@ -73,6 +77,7 @@ async function fixture() {
     registryDir,
     socketPath,
     answers,
+    bridgeConnections: () => ({ accepted: acceptedConnections, closed: closedConnections }),
     setPending: (value: typeof pending) => { pending = value; },
     setSnapshotFailure: (value: boolean) => { snapshotFailure = value; },
     setIdentity: (value: typeof identity) => { identity = value; },
@@ -111,6 +116,20 @@ describe("ExternalPermissionBridgeRegistry", () => {
         cancellable: false,
       }),
     ]);
+  });
+
+  it("destroys the client connection after each request so the bridge can finish server.close()", async () => {
+    const { registry, cwd, bridgeConnections } = await fixture();
+
+    await registry.listForCwd(cwd);
+
+    // The bridge counts a connection as open until the client closes its own
+    // half, and its server.close() (during Pi quit) waits for every peer. The
+    // poller must destroy its socket instead of leaving that to the garbage
+    // collector.
+    await vi.waitFor(() => {
+      expect(bridgeConnections().closed).toBeGreaterThan(0);
+    }, { timeout: 2_000 });
   });
 
   it("returns accepted only after the original bridge accepts the opaque choice", async () => {

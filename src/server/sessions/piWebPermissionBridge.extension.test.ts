@@ -1,3 +1,4 @@
+import { once } from "node:events";
 import { mkdtemp, mkdir, readFile, readdir, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { createConnection } from "node:net";
 import { tmpdir } from "node:os";
@@ -119,6 +120,59 @@ describe("pi-web permission bridge activation", () => {
     expect(second).toMatchObject({ ok: true, revision: 1 });
     expect(await request(socketPath, { type: "answer", answer: { requestId: "request-1", incarnation: "presentation-1", choiceId: "allow-token" } })).toEqual({ ok: true, result: { outcome: "accepted" } });
     expect(answer).toHaveBeenCalledWith({ requestId: "request-1", incarnation: "presentation-1", choiceId: "allow-token" });
+
+    await sessionShutdown();
+    const gone = parseObject(await readFile(registryPath, "utf8"));
+    expect(gone["state"]).toBe("gone");
+    await expect(stat(socketPath)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+  it("shuts down while a web client connection is still open", async () => {
+    vi.stubEnv("HERDR_ENV", "1");
+    const root = await mkdtemp(join(tmpdir(), "pi-web-bridge-extension-"));
+    cleanup.push(() => rm(root, { recursive: true, force: true }));
+    const bridgeDir = join(root, "bridges");
+    const cwd = join(root, "workspace");
+    const transcriptPath = join(root, "session.jsonl");
+    await mkdir(cwd);
+    await writeFile(transcriptPath, "");
+    vi.stubEnv("PI_WEB_PERMISSION_BRIDGE_DIR", bridgeDir);
+
+    let presentationListener: ((event: PermissionPresentationEvent) => void) | undefined;
+    const service: PermissionPresentationService = {
+      snapshot: () => [],
+      subscribe: (listener) => { presentationListener = listener; return () => { presentationListener = undefined; }; },
+      answer: () => ({ outcome: "accepted" }),
+    };
+    Reflect.set(globalThis, PRESENTATION_SERVICES_KEY, new Map([["session-1", service]]));
+
+    const { pi, handlers } = fakePi();
+    // eslint-disable-next-line @typescript-eslint/consistent-type-assertions -- intentionally narrow ExtensionAPI test double
+    piWebPermissionBridge(pi as unknown as ExtensionAPI);
+    const sessionStart = handlers.get("session_start");
+    const sessionShutdown = handlers.get("session_shutdown");
+    if (sessionStart === undefined || sessionShutdown === undefined) throw new Error("bridge lifecycle handlers missing");
+    sessionStart({}, {
+      cwd,
+      sessionManager: {
+        getSessionId: () => "session-1",
+        getSessionFile: () => transcriptPath,
+      },
+      ui: { notify: vi.fn() },
+    });
+
+    const registryPath = await waitForRegistry(bridgeDir);
+    const record = parseObject(await readFile(registryPath, "utf8"));
+    const socketPath = requireString(record, "socketPath");
+    expect(presentationListener).toBeTypeOf("function");
+
+    // The web poller holds a connection per poll; simulate an in-flight poll
+    // that has not closed its half when Pi quits. Teardown must still finish.
+    const held = createConnection(socketPath);
+    cleanup.push(() => {
+      held.destroy();
+      return Promise.resolve();
+    });
+    await once(held, "connect");
 
     await sessionShutdown();
     const gone = parseObject(await readFile(registryPath, "utf8"));
