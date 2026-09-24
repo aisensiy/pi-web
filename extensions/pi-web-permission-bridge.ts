@@ -2,7 +2,7 @@ import { createServer, type Server, type Socket } from "node:net";
 import { createHash, randomUUID } from "node:crypto";
 import { chmod, mkdir, readFile, realpath, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type {
   PendingPermissionPresentation,
@@ -244,7 +244,18 @@ async function processIncarnation(fallbackNonce: string): Promise<string> {
 }
 
 async function canonicalPath(path: string): Promise<string> {
-  return realpath(path);
+  try {
+    return await realpath(path);
+  } catch (error: unknown) {
+    if (!isEnoentError(error)) throw error;
+    // The transcript is created on the first persisted entry, so the leaf can
+    // still be missing at session start; canonicalize the parent instead.
+    return join(await realpath(dirname(path)), basename(path));
+  }
+}
+
+function isEnoentError(error: unknown): boolean {
+  return typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT";
 }
 
 function bridgeDirectory(env: Readonly<NodeJS.ProcessEnv>): string {

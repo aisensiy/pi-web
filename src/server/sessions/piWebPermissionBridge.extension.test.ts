@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, readdir, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { createConnection } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -124,6 +124,48 @@ describe("pi-web permission bridge activation", () => {
     const gone = parseObject(await readFile(registryPath, "utf8"));
     expect(gone["state"]).toBe("gone");
     await expect(stat(socketPath)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+  it("activates before the transcript exists by canonicalizing the parent directory", async () => {
+    vi.stubEnv("HERDR_ENV", "1");
+    const root = await mkdtemp(join(tmpdir(), "pi-web-bridge-extension-"));
+    cleanup.push(() => rm(root, { recursive: true, force: true }));
+    const bridgeDir = join(root, "bridges");
+    const cwd = join(root, "workspace");
+    const transcriptPath = join(root, "session.jsonl");
+    await mkdir(cwd);
+    // Pi creates the transcript on the first persisted entry, so it is absent
+    // at session start; the bridge must still activate without warning.
+    vi.stubEnv("PI_WEB_PERMISSION_BRIDGE_DIR", bridgeDir);
+
+    let presentationListener: ((event: PermissionPresentationEvent) => void) | undefined;
+    const service: PermissionPresentationService = {
+      snapshot: () => [],
+      subscribe: (listener) => { presentationListener = listener; return () => { presentationListener = undefined; }; },
+      answer: () => ({ outcome: "accepted" }),
+    };
+    Reflect.set(globalThis, PRESENTATION_SERVICES_KEY, new Map([["session-1", service]]));
+
+    const { pi, handlers } = fakePi();
+    // eslint-disable-next-line @typescript-eslint/consistent-type-assertions -- intentionally narrow ExtensionAPI test double
+    piWebPermissionBridge(pi as unknown as ExtensionAPI);
+    const sessionStart = handlers.get("session_start");
+    if (sessionStart === undefined) throw new Error("bridge lifecycle handlers missing");
+    const notify = vi.fn();
+    sessionStart({}, {
+      cwd,
+      sessionManager: {
+        getSessionId: () => "session-1",
+        getSessionFile: () => transcriptPath,
+      },
+      ui: { notify },
+    });
+
+    const registryPath = await waitForRegistry(bridgeDir);
+    const record = parseObject(await readFile(registryPath, "utf8"));
+    expect(record["state"]).toBe("ready");
+    expect(record["transcriptPath"]).toBe(join(await realpath(root), "session.jsonl"));
+    expect(presentationListener).toBeTypeOf("function");
+    expect(notify).not.toHaveBeenCalled();
   });
 });
 
